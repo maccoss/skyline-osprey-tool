@@ -39,7 +39,14 @@ jobs:
           git sparse-checkout init --cone
           git sparse-checkout set pwiz_tools/Osprey pwiz_tools/Shared/Lib/DotNetZip pwiz_tools/Shared/Lib/Parquet
           git checkout "$PWIZ_REF"
-          echo "OSPREY_DIR=$(pwd)/pwiz_tools/Osprey" >> "$GITHUB_ENV"
+          # A NATIVE path: bash `pwd` on a Windows runner yields an MSYS path (/d/a/...) that MSBuild cannot
+          # resolve - and MSBuild only warns about the missing ProjectReference, so the build fails much later
+          # with a wall of "type not found" errors. github.workspace is the Windows path.
+          echo "OSPREY_DIR=${{ github.workspace }}\pwiz\pwiz_tools\Osprey" >> "$GITHUB_ENV"
+
+      - name: Confirm Osprey resolved
+        shell: bash
+        run: test -f "$OSPREY_DIR/Osprey.Core/Osprey.Core.csproj" && echo "Osprey at $OSPREY_DIR"
 
       - name: Build (Release)
         run: dotnet build dotnet/OspreyTool.sln -c Release

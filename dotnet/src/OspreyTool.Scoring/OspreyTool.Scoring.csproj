@@ -14,6 +14,13 @@
     <ProjectReference Include="..\OspreyTool.Core\OspreyTool.Core.csproj" />
   </ItemGroup>
 
+  <!-- Fail fast and clearly on a bad OspreyDir. MSBuild only WARNS about a ProjectReference that does not
+       exist and then builds on, which buries the real problem under ~80 "type not found" errors. -->
+  <Target Name="CheckOspreyDir" BeforeTargets="PrepareForBuild">
+    <Error Condition="!Exists('$(OspreyDir)\Osprey.Core\Osprey.Core.csproj')"
+           Text="Osprey not found at OspreyDir='$(OspreyDir)'. Point it at a pwiz checkout's pwiz_tools/Osprey, e.g. -p:OspreyDir=&lt;path&gt; or the OSPREY_DIR environment variable (a native path - an MSYS/Cygwin path like /d/a/... will not resolve on Windows)." />
+  </Target>
+
   <!-- Osprey engine (multi-target net472;net8.0; the net8.0 target resolves for this project). -->
   <ItemGroup>
     <ProjectReference Include="$(OspreyDir)\Osprey.Core\Osprey.Core.csproj" />
