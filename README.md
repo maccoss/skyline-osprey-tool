@@ -142,11 +142,13 @@ public interface IPeakDetector
 ```
 
 Implement it, call `PeakDetectors.Register(...)`, and it appears in the Settings dropdown and under
-`--detector` automatically. Scoring, FDR and reconciliation are unaffected by the choice.
-`LocalMaximaPeakDetector` is a complete, dependency-free worked example. See
-[CLAUDE.md](CLAUDE.md#adding-a-peak-detection-algorithm-the-pluggable-seam) for the contract — chiefly:
-**return every plausible candidate, not just your best one**, because the tool ranks them and reconciliation
-needs the alternatives.
+`--detector` automatically. Scoring, FDR and reconciliation are unaffected by the choice, which is what makes
+detectors directly comparable. `LocalMaximaPeakDetector` is a complete, dependency-free worked example.
+
+**→ [`docs/adding-a-peak-detector.md`](docs/adding-a-peak-detector.md)** is the full contract, with a worked
+example, how to test it, and how to benchmark it against Osprey CWT on real data. The rule people get wrong:
+**return every plausible candidate, not just your best one** — the tool ranks them, and reconciliation needs
+the alternatives to snap to.
 
 ## Build from source
 
@@ -174,6 +176,7 @@ Only the Osprey subtree is needed; CI fetches it with a sparse checkout of pwiz 
 | | |
 |---|---|
 | [`docs/PROJECT_BRIEF.md`](docs/PROJECT_BRIEF.md) | The spec: decisions, verified upstream APIs, milestones, risks. |
+| [`docs/adding-a-peak-detector.md`](docs/adding-a-peak-detector.md) | How to plug in your own peak-detection algorithm — the contract, a worked example, and how to benchmark it. |
 | [`docs/osprey-api.md`](docs/osprey-api.md) | The Osprey API contract this tool depends on. |
 | [`docs/data-formats.md`](docs/data-formats.md) | The chromatogram export / `.blib` / join formats, verified against real data. |
 | [`release-notes/`](release-notes/) | Release notes, plus the versioning and release process. |

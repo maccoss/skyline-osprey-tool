@@ -81,6 +81,9 @@ Two design decisions drive everything (see brief §"Decisions locked in"):
 
 ## Adding a peak-detection algorithm (the pluggable seam)
 
+**Full guide: [`docs/adding-a-peak-detector.md`](docs/adding-a-peak-detector.md)** (contract, worked example,
+testing, benchmarking against CWT). Summary below.
+
 Peak **detection** is swappable; everything downstream (scoring, ranking, FDR, reconciliation) is not
 affected by the choice. The seam is `OspreyTool.Core/Detection/IPeakDetector.cs` — it lives in **Core and
 speaks only in arrays, so an implementation needs no Osprey reference at all**.
