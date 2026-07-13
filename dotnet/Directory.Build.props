@@ -5,10 +5,11 @@
          No effect on Windows. -->
     <EnableWindowsTargeting>true</EnableWindowsTargeting>
 
-    <!-- Single source of truth for the assembly version. The Skyline tool manifest
-         version (src/OspreyTool.App/tool-inf/info.properties, once it exists) must be
-         kept in lockstep at release time. -->
-    <Version>0.1.0</Version>
+    <!-- Single source of truth for the assembly version. The Skyline tool manifest version lives
+         separately in src/OspreyTool.App/tool-inf/info.properties and must be kept in lockstep at
+         release time; .github/workflows/release.yml verifies both against the tag before publishing.
+         Scheme: CalVer YY.feature.patch (see release-notes/README.md). -->
+    <Version>26.1.0</Version>
 
     <LangVersion>latest</LangVersion>
     <ImplicitUsings>enable</ImplicitUsings>

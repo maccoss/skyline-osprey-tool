@@ -16,6 +16,12 @@ if (args.Length == 0 || args[0] is "-h" or "--help" or "help")
     return 0;
 }
 
+if (args[0] is "-v" or "--version" or "version")
+{
+    Console.WriteLine($"ospreytool {typeof(Program).Assembly.GetName().Version?.ToString() ?? "unknown"}");
+    return 0;
+}
+
 switch (args[0])
 {
     case "m0":
@@ -935,14 +941,45 @@ static void ReportFeatureAvailability(string sky)
 
 static void PrintUsage()
 {
-    Console.WriteLine("OspreyTool - Skyline + Osprey PRM detection/scoring (M0 harness)");
+    Console.WriteLine("ospreytool - Osprey-powered peak detection, picking and scoring for Skyline PRM data");
     Console.WriteLine();
-    Console.WriteLine("Usage:");
-    Console.WriteLine("  ospreytool m0 --xics <export.tsv> --blib <library.blib> [--sky <document.sky>]");
-    Console.WriteLine("  ospreytool score --xics <export.tsv> --blib <library.blib> --sky <document.sky> [--seed N]");
-    Console.WriteLine("  ospreytool repick --xics <export.tsv> --out <boundaries.csv>");
-    Console.WriteLine("  ospreytool settings --sky <document.sky>");
+    Console.WriteLine("Commands:");
+    Console.WriteLine("  reconcile   Re-pick + reconcile across runs, write Skyline peak boundaries (the main command)");
+    Console.WriteLine("  explain     Dump the candidate peaks + score breakdown for one peptide (diagnostics)");
+    Console.WriteLine("  repick      Re-pick peaks per run only (no cross-run reconciliation)");
+    Console.WriteLine("  decoyfdr    Genuine target/decoy Percolator FDR over the re-picked peaks");
+    Console.WriteLine("  score       Score targets + decoy-XICs and report per-feature separation (M0 harness)");
+    Console.WriteLine("  m0          Join the chromatogram export with the library and sanity-check RTs");
+    Console.WriteLine("  settings    Print the transition settings read from a .sky document");
+    Console.WriteLine("  --version   Print the version");
+    Console.WriteLine();
+    Console.WriteLine("Typical use (write reconciled boundaries, then import them into Skyline):");
+    Console.WriteLine("  ospreytool reconcile --xics export.tsv --blib library.blib --decoys decoys.tsv \\");
+    Console.WriteLine("             --rt-csv doc_rt.csv --no-fdr --all-targets --lib-cosine \\");
+    Console.WriteLine("             --out boundaries.csv --report report.csv");
+    Console.WriteLine();
+    Console.WriteLine("  ospreytool explain --xics export.tsv --blib library.blib --peptide PEPTIDEK \\");
+    Console.WriteLine("             --replicate MMCC-2-001 --decoys decoys.tsv --rt-csv doc_rt.csv");
+    Console.WriteLine();
+    Console.WriteLine("Key options (reconcile / explain):");
+    Console.WriteLine("  --xics <export.tsv>      Skyline chromatogram export (required)");
+    Console.WriteLine("  --blib <library.blib>    spectral library, for the predicted RT + fragment intensities");
+    Console.WriteLine("  --rt-csv <rt.csv>        expected RTs from the document (ExplicitRetentionTime); beats the blib RT");
+    Console.WriteLine("  --decoys <decoys.tsv>    decoy precursors, enabling FDR and the reconcile action column");
+    Console.WriteLine("  --out <boundaries.csv>   Skyline --import-peak-boundaries file to write");
+    Console.WriteLine("  --report <report.csv>    per precursor x replicate detail (boundaries, scores, action)");
+    Console.WriteLine("  --detector <id>          peak detector: " + PeakDetectors.Ids + " (default osprey-cwt)");
+    Console.WriteLine("  --lib-cosine             multiply median_polish_cosine into the pick score");
+    Console.WriteLine("  --intensity-exp <w>      exponent on the ln(1+I) term; 1 = Osprey-exact, 0 = off");
+    Console.WriteLine("  --rt-sigma <min>         width of the Gaussian RT prior (default 0.3)");
+    Console.WriteLine("  --rt-tol <min>           hard RT gate; 0 = off (scheduled PRM: the window is the limit)");
+    Console.WriteLine("  --no-fdr                 confidence from co-elution instead of Percolator");
+    Console.WriteLine("  --all-targets            reconcile every target (targeted assay), not only confident ones");
+    Console.WriteLine("  --no-charge-consensus    disable intra-run charge-state consensus");
+    Console.WriteLine("  --no-reconcile           disable inter-run consensus + reconciliation");
     Console.WriteLine();
     Console.WriteLine("Export <export.tsv> from Skyline with:");
     Console.WriteLine("  --chromatogram-file=export.tsv --chromatogram-precursors --chromatogram-products");
+    Console.WriteLine();
+    Console.WriteLine("Full documentation: https://github.com/maccoss/skyline-osprey-tool#command-line");
 }

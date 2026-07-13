@@ -1,0 +1,89 @@
+# Release, triggered by pushing a v* tag. Pushing the tag both builds the artifacts and creates the
+# GitHub Release - do not hand-create the Release.
+#
+# Publishes:
+#   OspreyTool.zip           the Skyline external tool (needs the .NET 8 Desktop Runtime)
+#   ospreytool-win-x64.zip   the command-line tool (needs the .NET 8 Runtime)
+name: release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+env:
+  # Keep in step with ci.yml. Pinned so a release cannot be built against an Osprey nobody tested.
+  PWIZ_REF: 7e1bb52694ac6a9309b09d02ee531be6e7131f42
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      # The two version sources must match the tag (vX.Y.Z -> X.Y.Z), so the Skyline tool manifest - which
+      # Skyline keys upgrade detection on - can never disagree with what the assemblies report.
+      - name: Verify version matches the tag
+        shell: bash
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          MANIFEST=$(sed -n 's/^Version = //p' dotnet/src/OspreyTool.App/tool-inf/info.properties | tr -d '[:space:]')
+          PROPS=$(sed -n 's:.*<Version>\(.*\)</Version>.*:\1:p' dotnet/Directory.Build.props | tr -d '[:space:]')
+          echo "tag=$TAG  manifest=$MANIFEST  props=$PROPS"
+          if [ "$TAG" != "$MANIFEST" ]; then
+            echo "::error::info.properties Version ($MANIFEST) does not match the tag ($TAG)"
+            exit 1
+          fi
+          if [ "$TAG" != "$PROPS" ]; then
+            echo "::error::Directory.Build.props Version ($PROPS) does not match the tag ($TAG)"
+            exit 1
+          fi
+          if [ ! -f "release-notes/RELEASE_NOTES_${GITHUB_REF_NAME}.md" ]; then
+            echo "::error::release-notes/RELEASE_NOTES_${GITHUB_REF_NAME}.md is missing"
+            exit 1
+          fi
+
+      - name: Checkout Osprey from pwiz (sparse)
+        shell: bash
+        run: |
+          git clone --filter=blob:none --no-checkout https://github.com/ProteoWizard/pwiz.git pwiz
+          cd pwiz
+          git sparse-checkout init --cone
+          git sparse-checkout set pwiz_tools/Osprey pwiz_tools/Shared/Lib/DotNetZip pwiz_tools/Shared/Lib/Parquet
+          git checkout "$PWIZ_REF"
+          echo "OSPREY_DIR=$(pwd)/pwiz_tools/Osprey" >> "$GITHUB_ENV"
+
+      - name: Test
+        run: dotnet test dotnet/OspreyTool.sln -c Release
+
+      - name: Package OspreyTool.zip
+        run: dotnet build dotnet/build/package.proj -c Release
+
+      # Loads the whole dependency graph and runs the engine once; a zip that merely opens a window is not
+      # good enough, because .NET would not load a missing engine DLL until the user pressed Run.
+      - name: Verify the packaged tool
+        shell: pwsh
+        run: pwsh -File dotnet/build/verify-tool.ps1
+
+      - name: Publish the CLI (win-x64)
+        shell: bash
+        run: |
+          dotnet publish dotnet/src/OspreyTool.Cli/OspreyTool.Cli.csproj -c Release -r win-x64 \
+            --self-contained false -o dist/ospreytool-win-x64
+          powershell -Command "Compress-Archive -Path dist/ospreytool-win-x64 -DestinationPath ospreytool-win-x64.zip"
+
+      - name: Publish the GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dotnet/publish/OspreyTool.zip
+            ospreytool-win-x64.zip
+          body_path: release-notes/RELEASE_NOTES_${{ github.ref_name }}.md
+          prerelease: ${{ contains(github.ref_name, 'alpha') || contains(github.ref_name, 'beta') || contains(github.ref_name, 'rc') }}

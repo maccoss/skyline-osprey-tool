@@ -1,0 +1,63 @@
+# Build, test, and package the Skyline external tool on every push / PR.
+#
+# OspreyTool project-references the Osprey engine from the ProteoWizard/pwiz tree, which is not part of this
+# repository. CI fetches only what is needed with a blobless, cone-mode sparse checkout (~58 MB rather than
+# the whole of pwiz) and points OSPREY_DIR at it.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  # Pinned so a change upstream in pwiz cannot turn this build red without a commit here. Bump
+  # deliberately (and re-run the tests) to pick up a newer Osprey.
+  PWIZ_REF: 7e1bb52694ac6a9309b09d02ee531be6e7131f42
+
+jobs:
+  build:
+    # The tool is a Windows WPF app (net8.0-windows) and Skyline is Windows-only, so CI builds where it ships.
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      # Osprey needs pwiz_tools/Directory.Build.props (picked up by cone mode, which keeps parent-level
+      # files) and the DotNetZip / Parquet libraries under pwiz_tools/Shared/Lib.
+      - name: Checkout Osprey from pwiz (sparse)
+        shell: bash
+        run: |
+          git clone --filter=blob:none --no-checkout https://github.com/ProteoWizard/pwiz.git pwiz
+          cd pwiz
+          git sparse-checkout init --cone
+          git sparse-checkout set pwiz_tools/Osprey pwiz_tools/Shared/Lib/DotNetZip pwiz_tools/Shared/Lib/Parquet
+          git checkout "$PWIZ_REF"
+          echo "OSPREY_DIR=$(pwd)/pwiz_tools/Osprey" >> "$GITHUB_ENV"
+
+      - name: Build (Release)
+        run: dotnet build dotnet/OspreyTool.sln -c Release
+
+      - name: Test
+        run: dotnet test dotnet/OspreyTool.sln -c Release --no-build --logger "console;verbosity=normal"
+
+      - name: Package OspreyTool.zip
+        run: dotnet build dotnet/build/package.proj -c Release
+
+      # The zip must actually launch. A build that compiles can still die on startup (a missing native
+      # dependency, a XAML error) - which looks to the user like "the tool does nothing".
+      - name: Verify the packaged tool launches
+        shell: pwsh
+        run: pwsh -File dotnet/build/verify-tool.ps1
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: OspreyTool-zip
+          path: dotnet/publish/OspreyTool.zip
+          if-no-files-found: error
