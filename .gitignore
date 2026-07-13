@@ -55,3 +55,11 @@ CodeCoverage/
 *.VisualState.xml
 TestResult.xml
 nunit-*.xml
+
+# Project test data (large binaries: .sky/.skyd/.blib, raw data, zips) — kept local only
+TestData/
+
+# Packaging output: the shippable tool zip and the publish tree it is built from
+# (dotnet/build/package.proj). Both are generated; rebuild with `dotnet build dotnet/build/package.proj`.
+dotnet/publish/
+dotnet/build/staging/

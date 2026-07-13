@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- The WinExe Skyline launches as an external tool. WPF; AssemblyName must match
+         the Command in the tool-inf manifest (OspreyTool.exe). -->
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <AssemblyName>OspreyTool</AssemblyName>
+    <RootNamespace>OspreyTool.App</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="ScottPlot.WPF" Version="5.0.55" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\OspreyTool.Core\OspreyTool.Core.csproj" />
+    <ProjectReference Include="..\OspreyTool.Scoring\OspreyTool.Scoring.csproj" />
+    <ProjectReference Include="..\OspreyTool.Skyline\OspreyTool.Skyline.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Skyline tool manifest + tool-definition, copied next to the exe (tool-inf\ preserved) and staged
+         into the tool zip. info.properties = package metadata; OspreyTool.properties = the Command/Args
+         Skyline runs. -->
+    <None Include="tool-inf\info.properties" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="tool-inf\OspreyTool.properties" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+</Project>
