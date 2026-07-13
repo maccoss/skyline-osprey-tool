@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+
+    <!-- Prototype-time project references to the pwiz Osprey checkout. The facade lives here
+         while M0/M1 prove the science; it is upstreamed into pwiz as Osprey.Api later. Override
+         the location with `-p:OspreyDir=<path>` or the OSPREY_DIR environment variable. -->
+    <OspreyDir Condition="'$(OspreyDir)' == ''">$(OSPREY_DIR)</OspreyDir>
+    <OspreyDir Condition="'$(OspreyDir)' == ''">D:\Dev\pwiz\pwiz_tools\Osprey</OspreyDir>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\OspreyTool.Core\OspreyTool.Core.csproj" />
+  </ItemGroup>
+
+  <!-- Osprey engine (multi-target net472;net8.0; the net8.0 target resolves for this project). -->
+  <ItemGroup>
+    <ProjectReference Include="$(OspreyDir)\Osprey.Core\Osprey.Core.csproj" />
+    <ProjectReference Include="$(OspreyDir)\Osprey.Chromatography\Osprey.Chromatography.csproj" />
+    <ProjectReference Include="$(OspreyDir)\Osprey.Scoring\Osprey.Scoring.csproj" />
+    <ProjectReference Include="$(OspreyDir)\Osprey.FDR\Osprey.FDR.csproj" />
+    <ProjectReference Include="$(OspreyDir)\Osprey.IO\Osprey.IO.csproj" />
+  </ItemGroup>
+
+</Project>

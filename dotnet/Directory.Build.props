@@ -1,0 +1,24 @@
+<Project>
+
+  <PropertyGroup>
+    <!-- Lets the net8.0-windows / WPF projects cross-compile on Linux/macOS/CI.
+         No effect on Windows. -->
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+
+    <!-- Single source of truth for the assembly version. The Skyline tool manifest
+         version (src/OspreyTool.App/tool-inf/info.properties, once it exists) must be
+         kept in lockstep at release time. -->
+    <Version>0.1.0</Version>
+
+    <LangVersion>latest</LangVersion>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+
+    <!-- Do NOT set InvariantGlobalization=true: WPF text layout throws
+         CultureNotFoundException under it. Cross-machine numeric reproducibility is
+         instead guaranteed by using CultureInfo.InvariantCulture explicitly in every
+         data-parse / data-output path (the chromatogram TSV is exported invariant). -->
+  </PropertyGroup>
+
+</Project>

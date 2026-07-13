@@ -1,0 +1,64 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{F674CAA9-332A-4E1D-8238-F98DDFE600D0}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "OspreyTool.Core", "src\OspreyTool.Core\OspreyTool.Core.csproj", "{A9C095BE-497F-4322-9782-F2D5D273AB9A}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "OspreyTool.Cli", "src\OspreyTool.Cli\OspreyTool.Cli.csproj", "{2F657FA0-87CA-47AF-9D87-15A90140677B}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "tests", "tests", "{E7FD5302-E2F9-49FE-B545-07D1C6EA8883}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "OspreyTool.Tests", "tests\OspreyTool.Tests\OspreyTool.Tests.csproj", "{84E687A2-3488-4780-A66A-2F455C2B68FD}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "OspreyTool.Scoring", "src\OspreyTool.Scoring\OspreyTool.Scoring.csproj", "{FC409A2B-B349-4B96-AAA9-3271CEC9C587}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "OspreyTool.App", "src\OspreyTool.App\OspreyTool.App.csproj", "{9DCD3A01-623F-4A3C-83BC-4EB59CE6A51D}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "OspreyTool.Skyline", "src\OspreyTool.Skyline\OspreyTool.Skyline.csproj", "{0489F6B6-9DDC-4EA9-BF6B-ED73270755C6}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{A9C095BE-497F-4322-9782-F2D5D273AB9A}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{A9C095BE-497F-4322-9782-F2D5D273AB9A}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{A9C095BE-497F-4322-9782-F2D5D273AB9A}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{A9C095BE-497F-4322-9782-F2D5D273AB9A}.Release|Any CPU.Build.0 = Release|Any CPU
+		{2F657FA0-87CA-47AF-9D87-15A90140677B}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{2F657FA0-87CA-47AF-9D87-15A90140677B}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{2F657FA0-87CA-47AF-9D87-15A90140677B}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{2F657FA0-87CA-47AF-9D87-15A90140677B}.Release|Any CPU.Build.0 = Release|Any CPU
+		{84E687A2-3488-4780-A66A-2F455C2B68FD}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{84E687A2-3488-4780-A66A-2F455C2B68FD}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{84E687A2-3488-4780-A66A-2F455C2B68FD}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{84E687A2-3488-4780-A66A-2F455C2B68FD}.Release|Any CPU.Build.0 = Release|Any CPU
+		{FC409A2B-B349-4B96-AAA9-3271CEC9C587}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{FC409A2B-B349-4B96-AAA9-3271CEC9C587}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{FC409A2B-B349-4B96-AAA9-3271CEC9C587}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{FC409A2B-B349-4B96-AAA9-3271CEC9C587}.Release|Any CPU.Build.0 = Release|Any CPU
+		{9DCD3A01-623F-4A3C-83BC-4EB59CE6A51D}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{9DCD3A01-623F-4A3C-83BC-4EB59CE6A51D}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{9DCD3A01-623F-4A3C-83BC-4EB59CE6A51D}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{9DCD3A01-623F-4A3C-83BC-4EB59CE6A51D}.Release|Any CPU.Build.0 = Release|Any CPU
+		{0489F6B6-9DDC-4EA9-BF6B-ED73270755C6}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{0489F6B6-9DDC-4EA9-BF6B-ED73270755C6}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{0489F6B6-9DDC-4EA9-BF6B-ED73270755C6}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{0489F6B6-9DDC-4EA9-BF6B-ED73270755C6}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(NestedProjects) = preSolution
+		{A9C095BE-497F-4322-9782-F2D5D273AB9A} = {F674CAA9-332A-4E1D-8238-F98DDFE600D0}
+		{2F657FA0-87CA-47AF-9D87-15A90140677B} = {F674CAA9-332A-4E1D-8238-F98DDFE600D0}
+		{84E687A2-3488-4780-A66A-2F455C2B68FD} = {E7FD5302-E2F9-49FE-B545-07D1C6EA8883}
+		{FC409A2B-B349-4B96-AAA9-3271CEC9C587} = {F674CAA9-332A-4E1D-8238-F98DDFE600D0}
+		{9DCD3A01-623F-4A3C-83BC-4EB59CE6A51D} = {F674CAA9-332A-4E1D-8238-F98DDFE600D0}
+		{0489F6B6-9DDC-4EA9-BF6B-ED73270755C6} = {F674CAA9-332A-4E1D-8238-F98DDFE600D0}
+	EndGlobalSection
+EndGlobal

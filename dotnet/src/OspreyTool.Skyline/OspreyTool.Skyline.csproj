@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- Skyline (and so a live connection) is Windows-only at RUNTIME, but nothing here needs the Windows
+         TFM to compile: System.IO.Pipes is cross-platform. Targeting plain net8.0 keeps the seam - and the
+         locator parsing in SkylineSelectionReader - unit-testable from the net8.0 test project. This is the
+         ONLY place the vendored SkylineTool sources are link-compiled. -->
+    <TargetFramework>net8.0</TargetFramework>
+    <RootNamespace>OspreyTool.Skyline</RootNamespace>
+    <!-- The vendored SkylineTool sources predate nullable reference types. -->
+    <Nullable>disable</Nullable>
+    <!-- CA1416: message-mode named pipes / WaitForPipeDrain are Windows-only. That is fine and intended -
+         the RPC only ever talks to a live Skyline, which is Windows-only. We keep the net8.0 TFM anyway so
+         the pure logic (locator parsing) stays testable, and we do not touch the vendored sources. -->
+    <NoWarn>$(NoWarn);CA1416</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\OspreyTool.Core\OspreyTool.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Vendored pwiz Skyline JSON-RPC client sources (Apache-2.0), link-compiled exactly the way pwiz's
+         SkylineMcpServer.csproj / skyline-prism do. Originals live in pwiz_tools/Skyline/SkylineTool/. -->
+    <Compile Include="..\..\external\SkylineTool\SkylineJsonToolClient.cs" Link="Rpc\SkylineJsonToolClient.cs" />
+    <Compile Include="..\..\external\SkylineTool\IJsonToolService.cs" Link="Rpc\IJsonToolService.cs" />
+    <Compile Include="..\..\external\SkylineTool\JsonToolConstants.cs" Link="Rpc\JsonToolConstants.cs" />
+    <Compile Include="..\..\external\SkylineTool\JsonToolModels.cs" Link="Rpc\JsonToolModels.cs" />
+  </ItemGroup>
+
+</Project>
