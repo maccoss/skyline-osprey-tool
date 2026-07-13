@@ -78,14 +78,17 @@ public static class SkylineColorScheme
                 {
                     continue;
                 }
-                // NOTE: Skyline's own attribute value is the misspelling "percursor" - match it, and accept
-                // the correct spelling too in case it is ever fixed upstream.
+                // Skyline writes the misspelling "percursor" (ColorScheme.cs GROUP_NAME_PRECURSOR; reported
+                // as ProteoWizard/pwiz#4415). Match it exactly, and accept the correct spelling too in case
+                // it is fixed upstream - but match nothing else, so an unknown or future colour type is
+                // ignored rather than silently treated as a precursor colour.
                 var type = (string?)el.Attribute("type") ?? "";
                 if (type.Equals("transition", StringComparison.OrdinalIgnoreCase))
                 {
                     transitions.Add(c);
                 }
-                else if (type.StartsWith("p", StringComparison.OrdinalIgnoreCase))
+                else if (type.Equals("percursor", StringComparison.OrdinalIgnoreCase) ||
+                         type.Equals("precursor", StringComparison.OrdinalIgnoreCase))
                 {
                     precursors.Add(c);
                 }

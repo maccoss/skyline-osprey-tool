@@ -17,16 +17,15 @@ public static class ChromatogramTsvReader
         "FileName\tPeptideModifiedSequence\tPrecursorCharge\tProductMz\tFragmentIon\t" +
         "ProductCharge\tIsotopeLabelType\tTotalArea\tTimes\tIntensities";
 
-    private const int ColFileName = 0;
-    private const int ColPeptide = 1;
-    private const int ColPrecursorCharge = 2;
-    private const int ColProductMz = 3;
-    private const int ColFragmentIon = 4;
-    private const int ColProductCharge = 5;
-    private const int ColTotalArea = 7;
-    private const int ColTimes = 8;
-    private const int ColIntensities = 9;
-    private const int ColumnCount = 10;
+    /// <summary>The columns this reader consumes, located BY NAME in the header (IsotopeLabelType is
+    /// exported but unused). Never by fixed position: were Skyline to reorder or insert a column, a
+    /// positional parser would silently read the wrong field - not hypothetical, that is exactly how an
+    /// m/z column once got read as a retention time in this project.</summary>
+    private static readonly string[] RequiredColumns =
+    {
+        "FileName", "PeptideModifiedSequence", "PrecursorCharge", "ProductMz", "FragmentIon",
+        "ProductCharge", "TotalArea", "Times", "Intensities",
+    };
 
     /// <summary>Reads and groups an export file into per-(file, precursor) chromatograms.</summary>
     public static IReadOnlyList<PrecursorChromatograms> ReadGroups(string path)
@@ -46,7 +45,8 @@ public static class ChromatogramTsvReader
         {
             return Array.Empty<PrecursorChromatograms>();
         }
-        ValidateHeader(header);
+        var col = MapColumns(header);
+        var minFields = col.Values.Max() + 1;
 
         string? line;
         while ((line = reader.ReadLine()) is not null)
@@ -57,13 +57,14 @@ public static class ChromatogramTsvReader
             }
 
             var fields = line.Split('\t');
-            if (fields.Length != ColumnCount)
+            if (fields.Length < minFields)
             {
                 throw new FormatException(
-                    $"Expected {ColumnCount} tab-delimited columns, found {fields.Length}.");
+                    $"Expected at least {minFields} tab-delimited columns, found {fields.Length}.");
             }
 
-            var key = (fields[ColFileName], fields[ColPeptide], ParseInt(fields[ColPrecursorCharge]));
+            var key = (fields[col["FileName"]], fields[col["PeptideModifiedSequence"]],
+                ParseInt(fields[col["PrecursorCharge"]]));
             if (!groups.TryGetValue(key, out var list))
             {
                 list = new List<XicData>();
@@ -74,12 +75,12 @@ public static class ChromatogramTsvReader
             list.Add(new XicData
             {
                 FragmentIndex = list.Count,
-                RetentionTimes = ParseArray(fields[ColTimes]),
-                Intensities = ParseArray(fields[ColIntensities]),
-                FragmentIon = fields[ColFragmentIon],
-                ProductMz = ParseDouble(fields[ColProductMz]),
-                ProductCharge = ParseInt(fields[ColProductCharge]),
-                TotalArea = ParseDouble(fields[ColTotalArea]),
+                RetentionTimes = ParseArray(fields[col["Times"]]),
+                Intensities = ParseArray(fields[col["Intensities"]]),
+                FragmentIon = fields[col["FragmentIon"]],
+                ProductMz = ParseDouble(fields[col["ProductMz"]]),
+                ProductCharge = ParseInt(fields[col["ProductCharge"]]),
+                TotalArea = ParseDouble(fields[col["TotalArea"]]),
             });
         }
 
@@ -97,13 +98,25 @@ public static class ChromatogramTsvReader
         return result;
     }
 
-    private static void ValidateHeader(string header)
+    /// <summary>Locates every required column in the header by name, so a reordered or extended export is
+    /// either read correctly or rejected outright - never silently mis-parsed.</summary>
+    private static Dictionary<string, int> MapColumns(string header)
     {
-        if (!header.StartsWith("FileName\t", StringComparison.Ordinal))
+        var found = new Dictionary<string, int>(StringComparer.Ordinal);
+        var names = header.Split('\t');
+        for (var i = 0; i < names.Length; i++)
+        {
+            found[names[i].Trim()] = i;
+        }
+
+        var missing = RequiredColumns.Where(c => !found.ContainsKey(c)).ToList();
+        if (missing.Count > 0)
         {
             throw new FormatException(
-                $"Unexpected chromatogram header. Expected:\n{ExpectedHeader}\nGot:\n{header}");
+                $"Chromatogram export is missing column(s): {string.Join(", ", missing)}.\n" +
+                $"Expected (order does not matter):\n{ExpectedHeader}\nGot:\n{header}");
         }
+        return RequiredColumns.ToDictionary(c => c, c => found[c], StringComparer.Ordinal);
     }
 
     private static double[] ParseArray(string cell)

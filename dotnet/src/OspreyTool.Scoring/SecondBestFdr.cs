@@ -32,7 +32,15 @@ public static class SecondBestFdr
         {
             pooled.Add((s, false, -1));
         }
-        pooled.Sort((a, b) => b.score.CompareTo(a.score));
+        // Descending by score, and at an EQUAL score put nulls before targets. Without the tie-break the
+        // sort is unstable, so a target and a null on the same score could fall either way: counting the
+        // target first would credit it with one fewer null above it and under-estimate its FDR. Ordering
+        // nulls first makes ties break conservatively (the estimate can only be too high, never too low).
+        pooled.Sort((a, b) =>
+        {
+            var byScore = b.score.CompareTo(a.score);
+            return byScore != 0 ? byScore : a.isTarget.CompareTo(b.isTarget); // false (null) sorts first
+        });
 
         // Forward pass: FDR at each target's rank = (decoysSoFar + 1) / targetsSoFar.
         var targetOrder = new (int idx, double fdr)[nT];
