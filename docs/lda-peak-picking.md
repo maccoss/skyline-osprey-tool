@@ -124,6 +124,25 @@ Against the document's `ExplicitRetentionTime` (the **scheduling** RT — the in
 
 Median |apex − scheduling RT|: **0.086 min product → 0.349 min learned**, a 4x increase.
 
+**But that is the per-run pick, and it is not what reaches the document.** Reconciliation exists precisely to
+survive a bad pick in one replicate: the cross-run consensus RT is anchored by the confident replicates, and an
+outlier is snapped to a candidate there or force-integrated. Re-measured through the full pipeline (charge
+consensus → consensus RT → keep / snap / force-integrate) on the same data, the RT gap essentially closes:
+
+| median |apex − scheduling RT| | product | learned |
+| --- | --- | --- |
+| per-run pick, no reconciliation | 0.086 min | 0.349 min |
+| **after reconciliation — the boundaries written to Skyline** | **0.040 min** | **0.046 min** |
+
+What the learned pick actually changes downstream is how much work reconciliation does: 1553 snap-to-candidate
+moves against 1045, 303 forced integrations against 214, 64 charge-consensus moves against 34 — and the same 301
+consensus peptides either way. 1144 of 5652 delivered apexes (20.2%) still differ between the two rankers, median
+shift 0.200 min; more rows than the 570 pre-reconciliation because a changed consensus RT propagates to every
+replicate of that peptide.
+
+So the RT statistic below is a property of the *per-run* pick, and reconciliation is the reason it does not carry
+through to the result. Judge a ranker change on reconciled output, not on `repick`.
+
 Against fragment co-elution at the window each one chose:
 
 | | product pick | learned pick |
@@ -143,15 +162,15 @@ rescue that window either (−0.145), so this is not an artifact of averaging ov
 
 That case is the product rank's failure mode, and the 92% co-elution figure says it is the common direction. The
 opposite failure — a strong interference elsewhere winning on co-elution because `rt_penalty` now carries only 3%
-of the weight — is the risk the RT statistic is pointing at, and it is real: a mis-picked peak in a targeted assay
-is a lost measurement. Which one dominates on *your* data is an empirical question about your chromatography, not
-something these numbers settle.
+of the weight — is the risk the RT statistic points at, and for a *single* replicate it is real. Across replicates
+it is mostly absorbed: that is what the reconciled numbers above show, and it is what reconciliation is for.
 
 Practical notes. The learned pick **is** the default, matching Osprey. If you have an established assay whose
-picks were reviewed under the product rank, diff the two before switching — `--ranker product` reproduces the old
-picks exactly, and `explain --peptide <seq>` shows all four terms per candidate. `--rt-sigma` will not buy the RT
-prior back: it shapes `rt_penalty`, but the weight on that term is what shrank, and re-weighting means a
-retrained model, which belongs upstream in Osprey.
+picks were reviewed under the product rank, diff the two through `reconcile` (not `repick`) before switching —
+`--ranker product` reproduces the old picks exactly, and `explain --peptide <seq>` shows all four terms per
+candidate plus what reconciliation applied. `--rt-sigma` will not buy the RT prior back: it shapes `rt_penalty`,
+but the weight on that term is what shrank, and re-weighting means a retrained model, which belongs upstream in
+Osprey.
 
 ## Where the code is
 
