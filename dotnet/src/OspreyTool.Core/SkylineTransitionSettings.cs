@@ -28,12 +28,34 @@ public sealed class SkylineTransitionSettings
     /// <summary>`transition_instrument/@mz_match_tolerance` - fallback when full-scan res is absent.</summary>
     public double MzMatchTolerance { get; init; }
 
-    /// <summary>True for ion-trap / unit-resolution product analyzers (fixed m/z window, not ppm).</summary>
-    public bool IsUnitResolution => IsUnitResolutionAnalyzer(ProductMassAnalyzer);
+    /// <summary>
+    /// True when fragment matching is governed by a fixed <b>m/z</b> window rather than a ppm /
+    /// resolving-power tolerance. Two cases:
+    /// <list type="bullet">
+    /// <item>a <b>LIT</b> product analyzer (<c>qit</c> / <c>ion_trap</c>) - unit resolution by construction;</item>
+    /// <item>no high-resolution product analyzer at all (<b>SRM on a triple quad</b>), where the m/z window is
+    /// <c>transition_instrument/@mz_match_tolerance</c>.</item>
+    /// </list>
+    /// Anything on a high-resolution analyzer (<c>orbitrap</c>, <c>tof</c>, <c>ft_icr</c>, <c>centroided</c>)
+    /// is HRAM. This is exactly the split Osprey's per-platform models are keyed on - the fragment tolerance
+    /// unit, not the instrument name - so it also selects the frozen peak-pick weights (unit -> Stellar,
+    /// HRAM -> Astral; see <c>OspreyTool.Scoring.Ranking.PickLdaModel</c>).
+    /// </summary>
+    public bool IsUnitResolution =>
+        IsUnitResolutionAnalyzer(ProductMassAnalyzer) ||
+        (!IsHighResolutionAnalyzer(ProductMassAnalyzer) && MzMatchTolerance > 0);
 
     public static bool IsUnitResolutionAnalyzer(string analyzer) =>
         analyzer.Equals("qit", StringComparison.OrdinalIgnoreCase) ||
         analyzer.Equals("ion_trap", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>Skyline's high-resolution product analyzers - these express accuracy as ppm or resolving
+    /// power, never as a fixed m/z window.</summary>
+    public static bool IsHighResolutionAnalyzer(string analyzer) =>
+        analyzer.Equals("orbitrap", StringComparison.OrdinalIgnoreCase) ||
+        analyzer.Equals("tof", StringComparison.OrdinalIgnoreCase) ||
+        analyzer.Equals("ft_icr", StringComparison.OrdinalIgnoreCase) ||
+        analyzer.Equals("centroided", StringComparison.OrdinalIgnoreCase);
 
     public static SkylineTransitionSettings FromDocument(string skylineDocumentPath)
     {

@@ -2,6 +2,7 @@ using System.Globalization;
 using OspreyTool.Core;
 using OspreyTool.Scoring;
 using OspreyTool.Scoring.Detection;
+using OspreyTool.Scoring.Ranking;
 
 // M0 harness: join a Skyline chromatogram export to a Carafe/Cadenza .blib and print the
 // sanity report (clean join + predicted-RT-in-window). The Osprey scoring path (CWT + the
@@ -52,6 +53,8 @@ static int RunRepick(string[] args)
     string? blib = null;
     string? outPath = null;
     string? reportPath = null;
+    string? sky = null, resolution = null;
+    var rankerId = "lda";
     var minConsensus = 0.0;
     var rtTol = 0.5;
     var rtSigma = 0.3;
@@ -64,6 +67,15 @@ static int RunRepick(string[] args)
                 break;
             case "--blib" when i + 1 < args.Length:
                 blib = args[++i];
+                break;
+            case "--sky" when i + 1 < args.Length:
+                sky = args[++i];
+                break;
+            case "--resolution" when i + 1 < args.Length:
+                resolution = args[++i].ToLowerInvariant();
+                break;
+            case "--ranker" when i + 1 < args.Length:
+                rankerId = args[++i];
                 break;
             case "--out" when i + 1 < args.Length:
                 outPath = args[++i];
@@ -87,7 +99,8 @@ static int RunRepick(string[] args)
     }
     if (xics is null || outPath is null)
     {
-        Console.Error.WriteLine("repick requires --xics <export.tsv> --out <boundaries.csv> [--blib <lib.blib>] [--rt-tol 0.5] [--rt-sigma 0.3].");
+        Console.Error.WriteLine("repick requires --xics <export.tsv> --out <boundaries.csv> [--blib <lib.blib>] " +
+            "[--ranker lda|product] [--sky <document.sky>] [--rt-tol 0.5] [--rt-sigma 0.3].");
         return 2;
     }
     if (!File.Exists(xics))
@@ -95,9 +108,26 @@ static int RunRepick(string[] args)
         Console.Error.WriteLine($"XIC export not found: {xics}");
         return 1;
     }
+    if (rankerId is not ("product" or "lda"))
+    {
+        Console.Error.WriteLine($"Unknown --ranker '{rankerId}'. Available: lda (default), product.");
+        return 2;
+    }
+    if (resolution is not (null or "unit" or "hram"))
+    {
+        Console.Error.WriteLine($"Unknown --resolution '{resolution}'. Available: unit, hram.");
+        return 2;
+    }
+    if (sky is not null && !File.Exists(sky))
+    {
+        Console.Error.WriteLine($"Skyline document not found: {sky}");
+        return 1;
+    }
 
     IReadOnlyDictionary<OspreyTool.Core.PrecursorKey, double> rtMap =
         new Dictionary<OspreyTool.Core.PrecursorKey, double>();
+    // The learned pick weights median_polish, so it needs the library's fragment intensities too.
+    Dictionary<OspreyTool.Core.PrecursorKey, IReadOnlyList<LibraryFragment>>? fragsByPrec = null;
     if (blib is not null)
     {
         if (!File.Exists(blib))
@@ -108,17 +138,32 @@ static int RunRepick(string[] args)
         Console.WriteLine($"Reading predicted RTs from library: {blib}");
         rtMap = new BlibReader(blib).ReadRetentionTimes();
         Console.WriteLine($"  {rtMap.Count} predicted retention times loaded.");
+        if (rankerId == "lda")
+        {
+            fragsByPrec = new Dictionary<OspreyTool.Core.PrecursorKey, IReadOnlyList<LibraryFragment>>();
+            foreach (var e in new BlibReader(blib).ReadEntries(includeFragments: true))
+            {
+                fragsByPrec[new PrecursorKey(ModifiedSequence.Normalize(e.PeptideModifiedSequence), e.PrecursorCharge)] = e.Fragments;
+            }
+            Console.WriteLine($"  {fragsByPrec.Count} library spectra loaded (median_polish term).");
+        }
     }
     else
     {
         Console.WriteLine("No --blib given: re-picking on co-elution + intensity only (no RT penalty / gate).");
+        if (rankerId == "lda")
+        {
+            Console.WriteLine("  ! No library: the learned pick's median_polish term is neutral for every candidate.");
+        }
     }
 
     Console.WriteLine($"Reading chromatograms: {xics}");
     var groups = ChromatogramTsvReader.ReadGroups(xics);
-    Console.WriteLine($"Re-picking {groups.Count} groups with Osprey rank score " +
-        $"(rt-tol {rtTol}, rt-sigma {rtSigma}) ...");
-    var summary = RepickPipeline.Run(groups, rtMap, rtTol, rtSigma, minConsensus);
+    var setup = ScoringSetupFactory.Resolve(sky, resolution, rankerId);
+    PrintScoringSetup(setup);
+    Console.WriteLine($"Re-picking {groups.Count} groups (rt-tol {rtTol}, rt-sigma {rtSigma}) ...");
+    var summary = RepickPipeline.Run(groups, rtMap, rtTol, rtSigma, minConsensus,
+        setup.Ranker, fragsByPrec, setup.Osprey);
 
     var ci = System.Globalization.CultureInfo.InvariantCulture;
     using (var w = new StreamWriter(outPath))
@@ -150,6 +195,7 @@ static int RunRepick(string[] args)
     Console.WriteLine();
     Console.WriteLine("Re-pick summary");
     Console.WriteLine("===============");
+    Console.WriteLine($"Pick rank model              : {summary.RankerId}");
     Console.WriteLine($"Groups                       : {summary.Groups}");
     Console.WriteLine($"Re-picked (boundary written) : {summary.Repicked}");
     Console.WriteLine($"Too few fragments (<2)       : {summary.TooFewFragments} (kept Skyline's pick)");
@@ -187,9 +233,11 @@ static int RunDecoyFdr(string[] args)
 {
     var ci = System.Globalization.CultureInfo.InvariantCulture;
     string? xics = null, blib = null, decoysFile = null, outPath = null, reportPath = null;
+    string? sky = null, resolution = null;
     var minConsensus = 0.0;
     var rtTol = 0.5;
     var rtSigma = 0.3;
+    var rankerId = "lda";
     for (var i = 0; i < args.Length; i++)
     {
         switch (args[i])
@@ -199,6 +247,9 @@ static int RunDecoyFdr(string[] args)
             case "--decoys" when i + 1 < args.Length: decoysFile = args[++i]; break;
             case "--out" when i + 1 < args.Length: outPath = args[++i]; break;
             case "--report" when i + 1 < args.Length: reportPath = args[++i]; break;
+            case "--ranker" when i + 1 < args.Length: rankerId = args[++i]; break;
+            case "--sky" when i + 1 < args.Length: sky = args[++i]; break;
+            case "--resolution" when i + 1 < args.Length: resolution = args[++i].ToLowerInvariant(); break;
             case "--min-consensus" when i + 1 < args.Length: minConsensus = double.Parse(args[++i], ci); break;
             case "--rt-tol" when i + 1 < args.Length: rtTol = double.Parse(args[++i], ci); break;
             case "--rt-sigma" when i + 1 < args.Length: rtSigma = double.Parse(args[++i], ci); break;
@@ -210,8 +261,24 @@ static int RunDecoyFdr(string[] args)
     if (xics is null || blib is null || decoysFile is null)
     {
         Console.Error.WriteLine("decoyfdr requires --xics <target+decoy export.tsv> --blib <lib.blib> " +
-            "--decoys <decoys.tsv> [--out <boundaries.csv>] [--report <report.csv>] [--rt-tol 0.5] [--rt-sigma 0.3].");
+            "--decoys <decoys.tsv> [--out <boundaries.csv>] [--report <report.csv>] [--ranker lda|product] " +
+            "[--sky <document.sky>] [--rt-tol 0.5] [--rt-sigma 0.3].");
         return 2;
+    }
+    if (rankerId is not ("product" or "lda"))
+    {
+        Console.Error.WriteLine($"Unknown --ranker '{rankerId}'. Available: lda (default), product.");
+        return 2;
+    }
+    if (resolution is not (null or "unit" or "hram"))
+    {
+        Console.Error.WriteLine($"Unknown --resolution '{resolution}'. Available: unit, hram.");
+        return 2;
+    }
+    if (sky is not null && !File.Exists(sky))
+    {
+        Console.Error.WriteLine($"Skyline document not found: {sky}");
+        return 1;
     }
     foreach (var (path, label) in new[] { (xics, "XIC export"), (blib, "Blib"), (decoysFile, "Decoys list") })
     {
@@ -277,9 +344,12 @@ static int RunDecoyFdr(string[] args)
         }
     }
 
-    Console.WriteLine($"Scoring {groups.Count} groups (targets + genuine decoys) with Osprey rank score " +
+    var setup = ScoringSetupFactory.Resolve(sky, resolution, rankerId);
+    PrintScoringSetup(setup);
+    Console.WriteLine($"Scoring {groups.Count} groups (targets + genuine decoys) " +
         $"(rt-tol {rtTol}, rt-sigma {rtSigma}) then Percolator ...");
-    var summary = DecoyFdrPipeline.Run(groups, rtByTarget, decoyKeys, rtByDecoy, rtTol, rtSigma, minConsensus);
+    var summary = DecoyFdrPipeline.Run(groups, rtByTarget, decoyKeys, rtByDecoy, rtTol, rtSigma, minConsensus,
+        setup.Ranker, setup.Osprey);
 
     if (outPath is not null)
     {
@@ -307,6 +377,7 @@ static int RunDecoyFdr(string[] args)
     Console.WriteLine();
     Console.WriteLine("Genuine target-decoy Percolator FDR");
     Console.WriteLine("===================================");
+    Console.WriteLine($"Pick rank model              : {summary.RankerId}");
     Console.WriteLine($"Targets scored               : {summary.TargetsScored} / {summary.TargetGroups}");
     Console.WriteLine($"Decoys scored                : {summary.DecoysScored} / {summary.DecoyGroups}");
     if (!summary.PercolatorOk)
@@ -333,6 +404,19 @@ static int RunDecoyFdr(string[] args)
     return 0;
 }
 
+// Prints which resolution was resolved and which frozen pick model that selects (see ScoringSetupFactory:
+// a fixed m/z tolerance - LIT or triple quad - takes the Stellar weights, ppm/HRAM takes Astral).
+static void PrintScoringSetup(ScoringSetup setup)
+{
+    Console.WriteLine($"Resolution     : {setup.ResolutionSource}");
+    Console.WriteLine($"Pick rank model: {setup.Ranker.DisplayName}");
+    if (setup.Ranker is PickLdaRankModel lda)
+    {
+        Console.WriteLine($"  rank = {lda.Model.Describe()}");
+        Console.WriteLine("  (frozen weights from Osprey; --intensity-exp and --lib-cosine do not affect this pick)");
+    }
+}
+
 // A reconciled boundary matches a CWT candidate when its start/end line up to well within a scan; a
 // force-integrated window generally lines up with no candidate at all.
 static bool SameWindow(CandidatePeak c, ReconcileRow r) =>
@@ -344,6 +428,7 @@ static int RunReconcile(string[] args)
 {
     var ci = System.Globalization.CultureInfo.InvariantCulture;
     string? xics = null, blib = null, decoysFile = null, outPath = null, reportPath = null, rtCsv = null;
+    string? sky = null, resolution = null;
     var useFdr = true;
     var chargeConsensus = true;
     var interRun = true;
@@ -355,6 +440,7 @@ static int RunReconcile(string[] args)
     var minConsensus = 0.0;
     var intensityExp = 1.0;
     var detectorId = "osprey-cwt";
+    var rankerId = "lda";
     for (var i = 0; i < args.Length; i++)
     {
         switch (args[i])
@@ -363,8 +449,11 @@ static int RunReconcile(string[] args)
             case "--blib" when i + 1 < args.Length: blib = args[++i]; break;
             case "--decoys" when i + 1 < args.Length: decoysFile = args[++i]; break;
             case "--rt-csv" when i + 1 < args.Length: rtCsv = args[++i]; break;
+            case "--sky" when i + 1 < args.Length: sky = args[++i]; break;
+            case "--resolution" when i + 1 < args.Length: resolution = args[++i].ToLowerInvariant(); break;
             case "--out" when i + 1 < args.Length: outPath = args[++i]; break;
             case "--report" when i + 1 < args.Length: reportPath = args[++i]; break;
+            case "--ranker" when i + 1 < args.Length: rankerId = args[++i]; break;
             case "--no-fdr": useFdr = false; break;
             case "--all-targets": allTargets = true; break;
             case "--lib-cosine": libCosine = true; break;
@@ -384,7 +473,18 @@ static int RunReconcile(string[] args)
     if (xics is null || blib is null || decoysFile is null)
     {
         Console.Error.WriteLine("reconcile requires --xics <target+decoy export.tsv> --blib <lib.blib> --decoys <decoys.tsv> " +
-            "[--out <boundaries.csv>] [--report <report.csv>] [--no-fdr] [--no-charge-consensus] [--no-reconcile] [--threshold <q|coelution>].");
+            "[--out <boundaries.csv>] [--report <report.csv>] [--ranker lda|product] [--no-fdr] " +
+            "[--no-charge-consensus] [--no-reconcile] [--threshold <q|coelution>].");
+        return 2;
+    }
+    if (rankerId is not ("product" or "lda"))
+    {
+        Console.Error.WriteLine($"Unknown --ranker '{rankerId}'. Available: lda (default), product.");
+        return 2;
+    }
+    if (resolution is not (null or "unit" or "hram"))
+    {
+        Console.Error.WriteLine($"Unknown --resolution '{resolution}'. Available: unit, hram.");
         return 2;
     }
     foreach (var (path, label) in new[] { (xics, "XIC export"), (blib, "Blib"), (decoysFile, "Decoys list") })
@@ -394,6 +494,11 @@ static int RunReconcile(string[] args)
             Console.Error.WriteLine($"{label} not found: {path}");
             return 1;
         }
+    }
+    if (sky is not null && !File.Exists(sky))
+    {
+        Console.Error.WriteLine($"Skyline document not found: {sky}");
+        return 1;
     }
 
     var gate = threshold ?? (useFdr ? 0.01 : 0.5);
@@ -424,8 +529,10 @@ static int RunReconcile(string[] args)
         return 1;
     }
 
+    // The learned pick weights median_polish as one of its four features, so the library fragments are needed
+    // whether or not --lib-cosine (which only controls the legacy product form's multiplier) was given.
     IReadOnlyDictionary<PrecursorKey, IReadOnlyList<LibraryFragment>>? fragsByPrecursor = null;
-    if (libCosine)
+    if (libCosine || rankerId == "lda")
     {
         Console.WriteLine($"Loading library fragments for the spectral-match (median_polish_cosine) term: {blib}");
         var byPrec = new Dictionary<PrecursorKey, IReadOnlyList<LibraryFragment>>();
@@ -448,13 +555,17 @@ static int RunReconcile(string[] args)
     }
 
     var mode = useFdr ? $"Percolator FDR (q<={gate.ToString(ci)})" : $"co-elution (>={gate.ToString(ci)})";
+    var setup = ScoringSetupFactory.Resolve(sky, resolution, rankerId);
     Console.WriteLine($"Reconciling {groups.Count} groups | detector: {detector.DisplayName} | confidence: {mode} | " +
         $"charge-consensus: {(chargeConsensus ? "on" : "off")} | inter-run: {(interRun ? "on" : "off")} | " +
         $"intensity^{intensityExp.ToString(ci)} ...");
+    PrintScoringSetup(setup);
 
     var summary = ReconciliationPipeline.Run(groups, rtByTarget, decoyKeys, rtByDecoy, new ReconcileConfig
     {
         UseFdr = useFdr,
+        RankModel = setup.Ranker,
+        Osprey = setup.Osprey,
         ChargeConsensus = chargeConsensus,
         InterRunReconcile = interRun,
         AllTargets = allTargets,
@@ -492,6 +603,7 @@ static int RunReconcile(string[] args)
     Console.WriteLine();
     Console.WriteLine("Reconciliation summary");
     Console.WriteLine("======================");
+    Console.WriteLine($"Pick rank model              : {summary.RankerId}");
     Console.WriteLine($"Confidence source            : {(summary.UsedFdr ? "Percolator SVM score + q-values" : "co-elution rank score")}");
     Console.WriteLine($"Targets scored / passing     : {summary.TargetsScored} / {summary.TargetsPassing}");
     Console.WriteLine($"Decoys scored                : {summary.DecoysScored}");
@@ -520,11 +632,13 @@ static int RunExplain(string[] args)
 {
     var ci = CultureInfo.InvariantCulture;
     string? xics = null, blib = null, decoysFile = null, rtCsv = null, peptide = null, replicate = null;
+    string? sky = null, resolution = null;
     var rtSigma = 0.3;
     var rtTol = 0.0;
     var libCosine = true;
     var intensityExp = 1.0;
     var detectorId = "osprey-cwt";
+    var rankerId = "lda"; // must match the picking default, or explain would justify a pick nothing made
     for (var i = 0; i < args.Length; i++)
     {
         switch (args[i])
@@ -535,6 +649,9 @@ static int RunExplain(string[] args)
             case "--rt-csv" when i + 1 < args.Length: rtCsv = args[++i]; break;
             case "--peptide" when i + 1 < args.Length: peptide = args[++i]; break;
             case "--replicate" when i + 1 < args.Length: replicate = args[++i]; break;
+            case "--ranker" when i + 1 < args.Length: rankerId = args[++i]; break;
+            case "--sky" when i + 1 < args.Length: sky = args[++i]; break;
+            case "--resolution" when i + 1 < args.Length: resolution = args[++i].ToLowerInvariant(); break;
             case "--rt-sigma" when i + 1 < args.Length: rtSigma = double.Parse(args[++i], ci); break;
             case "--rt-tol" when i + 1 < args.Length: rtTol = double.Parse(args[++i], ci); break;
             case "--intensity-exp" when i + 1 < args.Length: intensityExp = double.Parse(args[++i], ci); break;
@@ -546,17 +663,34 @@ static int RunExplain(string[] args)
     if (xics is null || blib is null || peptide is null)
     {
         Console.Error.WriteLine("explain requires --xics <export.tsv> --blib <lib.blib> --peptide <ModSeq> " +
-            "[--replicate <name>] [--decoys <decoys.tsv>] [--rt-csv <doc RT.csv>] [--rt-sigma 0.3] " +
-            "[--intensity-exp 1.0] [--no-lib-cosine].");
+            "[--replicate <name>] [--decoys <decoys.tsv>] [--rt-csv <doc RT.csv>] [--ranker lda|product] " +
+            "[--sky <document.sky>] [--rt-sigma 0.3] [--intensity-exp 1.0] [--no-lib-cosine].");
         return 2;
+    }
+    if (rankerId is not ("product" or "lda"))
+    {
+        Console.Error.WriteLine($"Unknown --ranker '{rankerId}'. Available: lda (default), product.");
+        return 2;
+    }
+    if (resolution is not (null or "unit" or "hram"))
+    {
+        Console.Error.WriteLine($"Unknown --resolution '{resolution}'. Available: unit, hram.");
+        return 2;
+    }
+    if (sky is not null && !File.Exists(sky))
+    {
+        Console.Error.WriteLine($"Skyline document not found: {sky}");
+        return 1;
     }
 
     IReadOnlyDictionary<PrecursorKey, double> rtByTarget = rtCsv is not null
         ? LoadRtCsv(rtCsv, ci)
         : new BlibReader(blib).ReadRetentionTimes();
 
+    // The learned pick weights median_polish, so it needs the library fragments regardless of --lib-cosine
+    // (which only controls the legacy product form's multiplier).
     var fragsByPrec = new Dictionary<PrecursorKey, IReadOnlyList<LibraryFragment>>();
-    if (libCosine)
+    if (libCosine || rankerId == "lda")
     {
         foreach (var e in new BlibReader(blib).ReadEntries(includeFragments: true))
         {
@@ -565,6 +699,17 @@ static int RunExplain(string[] args)
     }
 
     var groups = ChromatogramTsvReader.ReadGroups(xics);
+
+    var detector = PeakDetectors.ById(detectorId);
+    if (detector is null)
+    {
+        Console.Error.WriteLine($"Unknown --detector '{detectorId}'. Available: {PeakDetectors.Ids}.");
+        return 2;
+    }
+    var setup = ScoringSetupFactory.Resolve(sky, resolution, rankerId);
+    var rankModel = setup.Ranker;
+    var scorer = new OspreyFeatureScorer(setup.Osprey, detector);
+    PrintScoringSetup(setup);
 
     // The reconciled outcome per replicate (targeted no-FDR) when decoys are available: the action AND the
     // boundary that was actually applied, which for a force-integration is NOT one of the CWT candidates.
@@ -576,22 +721,15 @@ static int RunExplain(string[] args)
             new ReconcileConfig
             {
                 UseFdr = false, AllTargets = true, RtTolerance = rtTol, RtSigma = rtSigma,
-                IntensityExponent = intensityExp, Detector = PeakDetectors.ById(detectorId),
+                IntensityExponent = intensityExp, Detector = detector, RankModel = rankModel,
+                Osprey = setup.Osprey,
             },
-            libCosine ? fragsByPrec : null);
+            fragsByPrec.Count > 0 ? fragsByPrec : null);
         foreach (var row in summary.Rows.Where(r => r.PeptideModifiedSequence == peptide && !r.IsDecoy))
         {
             reconByFile[row.FileName] = row;
         }
     }
-
-    var detector = PeakDetectors.ById(detectorId);
-    if (detector is null)
-    {
-        Console.Error.WriteLine($"Unknown --detector '{detectorId}'. Available: {PeakDetectors.Ids}.");
-        return 2;
-    }
-    var scorer = OspreyFeatureScorer.CreateDefault(detector);
     var shown = 0;
     foreach (var g in groups.Where(g => g.PeptideModifiedSequence == peptide
         && (replicate is null || g.FileName.Contains(replicate, StringComparison.OrdinalIgnoreCase))))
@@ -600,7 +738,7 @@ static int RunExplain(string[] args)
         double? expected = rtByTarget.TryGetValue(key, out var rt) ? rt : null;
         fragsByPrec.TryGetValue(key, out var frags);
         var r = scorer.Repick(g.Xics, expected, rtTol, rtSigma, 0.0, libraryFragments: frags,
-            traceCandidates: true, intensityExponent: intensityExp);
+            traceCandidates: true, intensityExponent: intensityExp, rankModel: rankModel);
 
         reconByFile.TryGetValue(g.FileName, out var recon);
 
@@ -614,7 +752,8 @@ static int RunExplain(string[] args)
             shown++;
             continue;
         }
-        Console.WriteLine($"  {"from",-9} {"apex",6} {"bounds",13} {"coel",7} {"libcos",7} {"dRT",6} {"rtPen",6} {"lnI",6} {"RANK",9}");
+        Console.WriteLine($"  {"from",-9} {"apex",6} {"bounds",13} {"coel",7} {"libcos",7} {"dRT",6} {"rtPen",6} " +
+            $"{"lnI",6} {(rankerId == "lda" ? "LDA" : "RANK"),9}");
         foreach (var c in r.CandidatePeaks.OrderByDescending(c => c.Rank))
         {
             var applied = recon is not null && SameWindow(c, recon) ? $"  <= APPLIED ({recon.Action})" : "";
@@ -629,7 +768,7 @@ static int RunExplain(string[] args)
             !r.CandidatePeaks.Any(c => SameWindow(c, recon)))
         {
             var w = scorer.ScoreWindow(g.Xics, recon.MinStartTime, recon.MaxEndTime, expected, rtSigma,
-                frags, intensityExp);
+                frags, intensityExp, rankModel);
             if (w is not null)
             {
                 Console.WriteLine($"  {"consensus",-9} {w.ApexRt,6:F2} [{w.StartRt,5:F2},{w.EndRt,5:F2}] {w.Coelution,7:F3} {w.LibCosine,7:F3} " +
@@ -969,8 +1108,17 @@ static void PrintUsage()
     Console.WriteLine("  --out <boundaries.csv>   Skyline --import-peak-boundaries file to write");
     Console.WriteLine("  --report <report.csv>    per precursor x replicate detail (boundaries, scores, action)");
     Console.WriteLine("  --detector <id>          peak detector: " + PeakDetectors.Ids + " (default osprey-cwt)");
-    Console.WriteLine("  --lib-cosine             multiply median_polish_cosine into the pick score");
-    Console.WriteLine("  --intensity-exp <w>      exponent on the ln(1+I) term; 1 = Osprey-exact, 0 = off");
+    Console.WriteLine("  --ranker lda|product     which candidate wins. lda (DEFAULT, = Osprey's default since");
+    Console.WriteLine("                           #4484) is Osprey's frozen learned linear pick over four");
+    Console.WriteLine("                           standardized terms: coelution, ln_intensity, rt_penalty,");
+    Console.WriteLine("                           median_polish. Nothing is trained and no decoys are needed.");
+    Console.WriteLine("                           product is the legacy multiplicative rank (OSPREY_PICK_LDA=0).");
+    Console.WriteLine("  --sky <document.sky>     read the product mass analyzer from the document, which selects");
+    Console.WriteLine("                           the frozen weights: m/z tolerance (LIT / triple quad) -> the");
+    Console.WriteLine("                           unit-resolution (Stellar) set, ppm -> the HRAM (Astral) set");
+    Console.WriteLine("  --resolution unit|hram   override that choice explicitly");
+    Console.WriteLine("  --lib-cosine             multiply median_polish_cosine into the pick score (product only)");
+    Console.WriteLine("  --intensity-exp <w>      exponent on the ln(1+I) term (product only); 1 = Osprey-exact, 0 = off");
     Console.WriteLine("  --rt-sigma <min>         width of the Gaussian RT prior (default 0.3)");
     Console.WriteLine("  --rt-tol <min>           hard RT gate; 0 = off (scheduled PRM: the window is the limit)");
     Console.WriteLine("  --no-fdr                 confidence from co-elution instead of Percolator");

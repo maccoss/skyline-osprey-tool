@@ -152,13 +152,42 @@ public partial class MainWindow : Window
     }
 
     // ---- settings -> config ----
-    private bool UseCosine => ScoringCombo.SelectedIndex == 1; // "Osprey + median_polish_cosine"
+
+    /// <summary>Index 0 = Osprey's learned pick (the default), 1/2 = the legacy product rank.</summary>
+    private bool UseLearnedPick => ScoringCombo.SelectedIndex == 0;
+
+    /// <summary>The library spectral match is part of the pick: always under the learned model (it is a
+    /// weighted feature there), and under the legacy rank only when the "+ median_polish_cosine" item is
+    /// chosen. Drives whether the library intensities are fetched from the document at all.</summary>
+    private bool UseCosine => UseLearnedPick || ScoringCombo.SelectedIndex == 2;
 
     /// <summary>The peak-detection algorithm chosen in Settings (pluggable - see IPeakDetector).</summary>
     private IPeakDetector SelectedDetector =>
         DetectorCombo.SelectedItem as IPeakDetector ?? PeakDetectors.Default;
 
-    private ReconcileConfig BuildConfig() => new()
+    /// <summary>
+    /// The scoring setup for the OPEN document: its transition settings decide the resolution, and the
+    /// resolution decides which of Osprey's frozen per-platform pick models applies (an m/z fragment
+    /// tolerance - LIT or triple quad - takes the unit-resolution weights; ppm takes the HRAM weights).
+    /// Falls back to the stated unit-resolution assumption if the document cannot be read.
+    /// </summary>
+    private ScoringSetup BuildScoringSetup()
+    {
+        string? docPath = null;
+        try
+        {
+            docPath = _session?.Execute(c => c.GetDocumentPath());
+        }
+        catch (Exception ex)
+        {
+            Log("Could not read the document path for the resolution check: " + ex.Message);
+        }
+        var rankerId = UseLearnedPick ? "lda" : "product";
+        return ScoringSetupFactory.Resolve(
+            docPath is not null && File.Exists(docPath) ? docPath : null, null, rankerId);
+    }
+
+    private ReconcileConfig BuildConfig(ScoringSetup setup) => new()
     {
         UseFdr = false, // FDR path needs decoys in the document; not wired into the connected workflow yet.
         AllTargets = AllTargetsCheck.IsChecked == true,
@@ -169,13 +198,16 @@ public partial class MainWindow : Window
         RtSigma = ParseD(RtSigmaBox.Text, 0.3),
         IntensityExponent = ParseD(IntensityExpBox.Text, 1.0),
         Detector = SelectedDetector,
+        RankModel = setup.Ranker,
+        Osprey = setup.Osprey,
     };
 
     /// <summary>Signature of the settings a reconciliation was produced under, so the Candidate Peaks panel
     /// can say when the cached reconciliation no longer matches the current settings.</summary>
     private string SettingsKey() =>
-        $"{UseCosine}|{RtSigmaBox.Text}|{RtTolBox.Text}|{IntensityExpBox.Text}|{AllTargetsCheck.IsChecked}|" +
-        $"{ChargeConsensusCheck.IsChecked}|{ReconcileCheck.IsChecked}|{SelectedDetector.Id}";
+        $"{ScoringCombo.SelectedIndex}|{RtSigmaBox.Text}|{RtTolBox.Text}|{IntensityExpBox.Text}|" +
+        $"{AllTargetsCheck.IsChecked}|{ChargeConsensusCheck.IsChecked}|{ReconcileCheck.IsChecked}|" +
+        $"{SelectedDetector.Id}";
 
     private static double ParseD(string t, double dflt) =>
         double.TryParse(t, NumberStyles.Float, Ci, out var v) ? v : dflt;
@@ -235,10 +267,13 @@ public partial class MainWindow : Window
         MainTabs.SelectedIndex = 2; // Log
         try
         {
-            var config = BuildConfig();
+            var setup = BuildScoringSetup();
+            var config = BuildConfig(setup);
             var useCosine = UseCosine; // capture UI-bound state on the UI thread (Task.Run runs off it)
             var inp = await EnsureDocInputs();
-            Log($"Scoring + reconciling (scoring: {(useCosine ? "Osprey + median_polish_cosine" : "Osprey")}) ...");
+            Log($"Resolution: {setup.ResolutionSource}");
+            Log($"Pick rank model: {setup.Ranker.DisplayName}");
+            Log("Scoring + reconciling ...");
             var summary = await Task.Run(() => ReconciliationPipeline.Run(
                 inp.Groups, inp.RtByTarget, inp.DecoyKeys, inp.RtByDecoy, config, useCosine ? inp.Fragments : null));
             LogSummary(summary);
@@ -356,11 +391,12 @@ public partial class MainWindow : Window
             var intensityExp = ParseD(IntensityExpBox.Text, 1.0);
             var useCosine = UseCosine; // capture UI-bound state on the UI thread
             var detector = SelectedDetector;
+            var setup = BuildScoringSetup(); // same rank model + resolution the Run used
             var inp = await EnsureDocInputs();
             var reconciled = ReconciledRows(peptide, charge); // what Run actually wrote to the document
             var rows = await Task.Run(() =>
             {
-                var scorer = OspreyFeatureScorer.CreateDefault(detector);
+                var scorer = new OspreyFeatureScorer(setup.Osprey, detector);
                 var results = new List<(string File, int Charge, double? Rt, IReadOnlyList<CandidatePeak>? Cands,
                     List<XicData> Frags, ReconcileRow? Recon, CandidatePeak? Applied, int PrecursorCount)>();
                 foreach (var g in SelectGroups(inp.Groups, peptide, replicate, charge))
@@ -372,7 +408,7 @@ public partial class MainWindow : Window
                     var libFrags = useCosine ? frags : null;
                     var r = scorer.Repick(g.Xics, expected, rtTol, rtSigma, 0.0,
                         libraryFragments: libFrags, traceCandidates: true,
-                        intensityExponent: intensityExp);
+                        intensityExponent: intensityExp, rankModel: setup.Ranker);
 
                     // The window reconciliation actually applied. When it is not one of the CWT candidates
                     // (force-integration at the consensus RT), score it on the same terms so the panel can
@@ -383,7 +419,7 @@ public partial class MainWindow : Window
                         !MatchesACandidate(r.CandidatePeaks, recon))
                     {
                         applied = scorer.ScoreWindow(g.Xics, recon.MinStartTime, recon.MaxEndTime, expected,
-                            rtSigma, libFrags, intensityExp);
+                            rtSigma, libFrags, intensityExp, setup.Ranker);
                     }
                     results.Add((g.FileName, g.PrecursorCharge, expected, r.CandidatePeaks,
                         g.Xics.Where(x => !x.IsPrecursor).ToList(), recon, applied,
@@ -582,10 +618,14 @@ public partial class MainWindow : Window
 
     private void OnShowCommandLine(object sender, RoutedEventArgs e)
     {
-        var c = BuildConfig();
+        var setup = BuildScoringSetup();
+        var c = BuildConfig(setup);
         var cmd = "ospreytool reconcile --xics <export.tsv> --blib <lib.blib> --rt-csv <docRT.csv>" +
+            " --sky <document.sky>" +
+            $" --ranker {setup.Ranker.Id}" +
             (c.AllTargets ? " --all-targets" : "") +
-            (UseCosine ? " --lib-cosine" : "") +
+            // --lib-cosine only shapes the legacy product rank; the learned pick always weights median_polish.
+            (!UseLearnedPick && UseCosine ? " --lib-cosine" : "") +
             " --no-fdr" +
             (c.ChargeConsensus ? "" : " --no-charge-consensus") +
             (c.InterRunReconcile ? "" : " --no-reconcile") +

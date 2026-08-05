@@ -1,5 +1,6 @@
 using OspreyTool.Core;
 using OspreyTool.Core.Detection;
+using OspreyTool.Scoring.Ranking;
 using pwiz.Osprey.Chromatography;
 using pwiz.Osprey.Core;
 using pwiz.Osprey.FDR;
@@ -38,6 +39,17 @@ public sealed class ReconcileConfig
     /// <summary>Which algorithm proposes candidate peaks. Null = Osprey's CWT. Everything downstream
     /// (scoring, ranking, FDR, reconciliation) is independent of the choice.</summary>
     public IPeakDetector? Detector { get; init; }
+
+    /// <summary>How a candidate's evidence is combined into the number the pick ranks on. Null = Osprey's
+    /// default, the frozen learned linear pick for the config's resolution
+    /// (<see cref="PickLdaRankModel"/>); pass <see cref="ProductRankModel.Instance"/> for the legacy
+    /// product form.</summary>
+    public ICandidateRankModel? RankModel { get; init; }
+
+    /// <summary>Osprey scoring config - build it from the document's transition settings
+    /// (<see cref="OspreyConfigFactory.FromTransitionSettings"/>) so the resolution mode, and with it which
+    /// frozen pick model applies, come from the instrument rather than a guess. Null = Osprey defaults.</summary>
+    public OspreyConfig? Osprey { get; init; }
 
     /// <summary>The confidence threshold used for calibration anchoring and pass/count reporting. In
     /// no-FDR mode q is 0/1 (pass/fail on co-elution), so 0.5 makes the pass/fail gate behave correctly.</summary>
@@ -78,6 +90,9 @@ public sealed class ReconcileSummary
     public required int ConsensusPeptides { get; init; }
     public required IReadOnlyList<string> Warnings { get; init; }
     public required IReadOnlyList<ReconcileRow> Rows { get; init; }
+
+    /// <summary>The rank model the picks were made with ("lda" or "product").</summary>
+    public required string RankerId { get; init; }
 }
 
 /// <summary>
@@ -125,7 +140,7 @@ public static class ReconciliationPipeline
         ReconcileConfig config,
         IReadOnlyDictionary<PrecursorKey, IReadOnlyList<CoreLibFragment>>? fragmentsByPrecursor = null)
     {
-        var scorer = new OspreyFeatureScorer(new OspreyConfig(), config.Detector);
+        var scorer = new OspreyFeatureScorer(config.Osprey ?? new OspreyConfig(), config.Detector);
         var decoySet = new HashSet<PrecursorKey>(decoyKeys);
         var warnings = new List<string>();
 
@@ -145,6 +160,18 @@ public static class ReconciliationPipeline
             return id;
         }
 
+        // Which rank model picks the winner among the detected candidates. Null = the scorer's default, which
+        // is Osprey's frozen learned linear pick for this resolution (nothing is trained - see PickLdaModel).
+        var rankModel = config.RankModel ?? scorer.DefaultRankModel;
+
+        // The learned model weights median_polish as a real feature, so a missing library silently demotes it
+        // to the neutral 1.0 for every candidate (a constant offset - the pick then rests on the other three).
+        if (rankModel is PickLdaRankModel && fragmentsByPrecursor is null)
+        {
+            warnings.Add("No library fragments supplied: the learned pick's median_polish term is neutral " +
+                "for every candidate, so that feature is effectively dropped.");
+        }
+
         // Stage 1: re-pick every group, keep everything (even gate-rejected) so reconciliation can rescue.
         var perFile = new List<(string File, List<Det> Dets)>();
         var fileIndex = new Dictionary<string, int>();
@@ -161,7 +188,7 @@ public static class ReconciliationPipeline
             fragmentsByPrecursor?.TryGetValue(key, out frags);
             var r = scorer.Repick(g.Xics, expected, config.RtTolerance, config.RtSigma,
                 config.MinConsensusHeight, computeFdrFeatures: config.UseFdr, retainCandidates: true,
-                libraryFragments: frags, intensityExponent: config.IntensityExponent);
+                libraryFragments: frags, intensityExponent: config.IntensityExponent, rankModel: rankModel);
 
             var det = new Det
             {
@@ -394,6 +421,7 @@ public static class ReconciliationPipeline
             ConsensusPeptides = consensusCount,
             Warnings = warnings,
             Rows = rows,
+            RankerId = rankModel.Id,
         };
     }
 

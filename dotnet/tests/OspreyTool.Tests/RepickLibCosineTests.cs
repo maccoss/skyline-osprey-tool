@@ -1,5 +1,6 @@
 using OspreyTool.Core;
 using OspreyTool.Scoring;
+using OspreyTool.Scoring.Ranking;
 using Xunit;
 
 namespace OspreyTool.Tests;
@@ -33,8 +34,10 @@ public sealed class RepickLibCosineTests
     [Fact]
     public void Trace_lists_candidates_with_terms_and_exactly_one_chosen()
     {
+        // Explicitly the product ranker: the tool's default is now Osprey's frozen learned pick, whose rank is
+        // a weighted sum of z-scores rather than a product (see RankModelPickTests).
         var r = Scorer().Repick(ThreeFragments(1.0, 0.5, 0.25), expectedRt: 7.4, rtTolerance: 0.0,
-            rtSigma: 0.3, traceCandidates: true);
+            rtSigma: 0.3, traceCandidates: true, rankModel: ProductRankModel.Instance);
 
         Assert.True(r.HasPeak);
         Assert.NotNull(r.CandidatePeaks);
@@ -82,7 +85,8 @@ public sealed class RepickLibCosineTests
     /// <summary>The QSMAQRAR case, in miniature: a real peak with better co-elution, better library match and
     /// a better RT, competing with an interference ~150x more intense. ln(1+I) is unbounded while the other
     /// three terms are capped at 1, so at Osprey's w=1 the interference outvotes all the evidence; at w=0 the
-    /// evidence decides.</summary>
+    /// evidence decides. This pins the PRODUCT ranker - the failure mode the frozen learned pick replaces
+    /// (see RankModelPickTests.Learned_pick_finds_the_real_peak_where_the_product_rank_is_captured_by_intensity).</summary>
     [Fact]
     public void An_intense_interference_beats_the_real_peak_at_w1_and_loses_at_w0()
     {
@@ -107,9 +111,9 @@ public sealed class RepickLibCosineTests
 
         const double realRt = 7.4; // 7.0 + 40 * 0.01; the interference is 0.16 min later, as in QSMAQRAR
         var atW1 = Scorer().Repick(xics, realRt, 0.0, 0.3, libraryFragments: Library, traceCandidates: true,
-            intensityExponent: 1.0);
+            intensityExponent: 1.0, rankModel: ProductRankModel.Instance);
         var atW0 = Scorer().Repick(xics, realRt, 0.0, 0.3, libraryFragments: Library, traceCandidates: true,
-            intensityExponent: 0.0);
+            intensityExponent: 0.0, rankModel: ProductRankModel.Instance);
 
         Assert.True(atW1.HasPeak && atW0.HasPeak);
         var dump = string.Join("\n", atW1.CandidatePeaks!.OrderByDescending(c => c.Rank).Select(c =>

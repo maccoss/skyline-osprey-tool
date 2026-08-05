@@ -60,9 +60,10 @@
                         <StackPanel Orientation="Horizontal" Margin="0,5">
                             <TextBlock Text="Primary scoring:" Width="200" VerticalAlignment="Center" />
                             <ComboBox x:Name="ScoringCombo" Width="330"
-                                      ToolTip="How the best peak is chosen. 'Osprey (as implemented)' = coelution x exp(-dt^2/2sigma^2) x ln(1+intensity), exactly as in Osprey. The '+ median_polish_cosine' option multiplies in the library spectral match so an interference that co-elutes but does not match the library is rejected.">
-                                <ComboBoxItem>Osprey (as implemented)</ComboBoxItem>
-                                <ComboBoxItem IsSelected="True">Osprey + median_polish_cosine</ComboBoxItem>
+                                      ToolTip="How the best peak is chosen. 'Osprey learned pick' is Osprey's own default: a frozen linear weighting of four standardized terms (coelution, ln intensity, RT penalty, median_polish_cosine), with weights that ship with Osprey - nothing is trained here. The two legacy options are the older multiplicative rank: coelution x exp(-dt^2/2sigma^2) x ln(1+intensity), optionally multiplied by the library spectral match. Only the legacy options are affected by the intensity exponent below.">
+                                <ComboBoxItem IsSelected="True">Osprey learned pick (frozen LDA weights)</ComboBoxItem>
+                                <ComboBoxItem>Legacy product rank</ComboBoxItem>
+                                <ComboBoxItem>Legacy product rank + median_polish_cosine</ComboBoxItem>
                             </ComboBox>
                         </StackPanel>
 

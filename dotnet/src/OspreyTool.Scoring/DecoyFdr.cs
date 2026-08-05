@@ -1,4 +1,5 @@
 using OspreyTool.Core;
+using OspreyTool.Scoring.Ranking;
 using pwiz.Osprey.Core;
 using pwiz.Osprey.FDR;
 using pwiz.Osprey.IO;
@@ -36,6 +37,9 @@ public sealed class DecoyFdrSummary
     public required bool PercolatorOk { get; init; }
     public required IReadOnlyList<RunDetections> PerRun { get; init; }
     public required IReadOnlyList<DecoyFdrRow> Rows { get; init; }
+
+    /// <summary>The rank model the peaks were picked with ("lda" or "product").</summary>
+    public required string RankerId { get; init; }
 }
 
 /// <summary>
@@ -56,10 +60,16 @@ public static class DecoyFdrPipeline
         IReadOnlyDictionary<PrecursorKey, double> rtByDecoy,
         double rtTolerance,
         double rtSigma,
-        double minConsensusHeight = 0.0)
+        double minConsensusHeight = 0.0,
+        ICandidateRankModel? rankModel = null,
+        OspreyConfig? ospreyConfig = null)
     {
-        var scorer = new OspreyFeatureScorer(new OspreyConfig());
+        var scorer = new OspreyFeatureScorer(ospreyConfig ?? new OspreyConfig());
         var decoySet = new HashSet<PrecursorKey>(decoyKeys);
+
+        // Which candidate represents each precursor. The FDR is unchanged either way - Percolator always runs
+        // over the genuine target-decoy competition; the rank model only changes which window is scored.
+        var ranker = rankModel ?? scorer.DefaultRankModel;
 
         var rows = new List<DecoyFdrRow>();
         var entries = new List<PercolatorEntry>();
@@ -85,7 +95,8 @@ public static class DecoyFdrPipeline
                 ? (rtByDecoy.TryGetValue(key, out var dr) ? dr : null)
                 : (rtByTarget.TryGetValue(key, out var tr) ? tr : null);
 
-            var r = scorer.Repick(g.Xics, expected, rtTolerance, rtSigma, minConsensusHeight, computeFdrFeatures: true);
+            var r = scorer.Repick(g.Xics, expected, rtTolerance, rtSigma, minConsensusHeight,
+                computeFdrFeatures: true, rankModel: ranker);
             if (!r.HasPeak || r.BestFeatures is null)
             {
                 continue;
@@ -168,6 +179,7 @@ public static class DecoyFdrPipeline
             PercolatorOk = percolatorOk,
             PerRun = perRun,
             Rows = rows,
+            RankerId = ranker.Id,
         };
     }
 }

@@ -1,15 +1,21 @@
 using OspreyTool.Core;
+using OspreyTool.Scoring.Ranking;
 using pwiz.Osprey.Core;
 using pwiz.Osprey.FDR;
 using pwiz.Osprey.IO;
 using pwiz.Osprey.Scoring;
+using CoreLibFragment = OspreyTool.Core.LibraryFragment;
 
 namespace OspreyTool.Scoring;
 
 /// <summary>
 /// One CWT candidate peak with the full breakdown of its pick score - the data behind the tool's
-/// "Candidate Peaks" panel (analogous to Skyline's View &gt; Live Reports &gt; Candidate Peaks). The rank is
-/// the product of the individual terms: <c>Coelution * LibCosine * RtPenalty * IntensityWeight</c>.
+/// "Candidate Peaks" panel (analogous to Skyline's View &gt; Live Reports &gt; Candidate Peaks), and the
+/// evidence vector the rank model scores.
+///
+/// <see cref="Rank"/> is whatever the active <see cref="OspreyTool.Scoring.Ranking.ICandidateRankModel"/>
+/// produced: the product <c>Coelution * LibCosine * RtPenalty * IntensityWeight</c> by default, or the
+/// learned discriminant under <c>--ranker lda</c> (which may be negative).
 /// </summary>
 public sealed class CandidatePeak
 {
@@ -20,8 +26,19 @@ public sealed class CandidatePeak
     public required double LibCosine { get; init; }
     public required double RtResidual { get; init; }
     public required double RtPenalty { get; init; }
+    /// <summary>The intensity tiebreaker as the product model uses it: <c>ln(1 + apexIntensity)^w</c>.</summary>
     public required double IntensityWeight { get; init; }
-    public required double Rank { get; init; }
+
+    /// <summary>Reference-fragment intensity at the apex - the raw input behind <see cref="IntensityWeight"/>,
+    /// kept separately because the LDA weights <c>ln(1+I)</c> itself rather than a pre-exponentiated term.</summary>
+    public double ApexIntensity { get; init; }
+
+    /// <summary>Signal-to-noise from the detector (Osprey's CWT supplies it; 0 when the detector does not).</summary>
+    public double SignalToNoise { get; init; }
+
+    /// <summary>The active rank model's score for this candidate. Higher wins.</summary>
+    public double Rank { get; set; }
+
     /// <summary>This candidate was selected as the best peak.</summary>
     public bool Chosen { get; set; }
     /// <summary>This candidate was selected as the (non-overlapping) second-best null.</summary>
@@ -82,6 +99,10 @@ public sealed class RepickResult
     /// <summary>Per-candidate score breakdown (for the Candidate Peaks diagnostic); null unless traced.</summary>
     public IReadOnlyList<CandidatePeak>? CandidatePeaks { get; init; }
 
+    /// <summary>The chosen peak's evidence terms (always populated when <see cref="HasPeak"/>) - what the
+    /// rank model scored, and what the LDA ranker trains on.</summary>
+    public CandidatePeak? ChosenTerms { get; init; }
+
     public static RepickResult NoCandidates() => new() { HasPeak = false, CandidateCount = 0 };
 
     public static RepickResult GateRejected(int candidateCount) =>
@@ -131,6 +152,8 @@ public sealed class RepickSummary
     public required int NoSecondBest { get; init; }
     public required int TargetsAtQ01 { get; init; }
     public required int TargetsAtQ05 { get; init; }
+    /// <summary>The rank model the picks were made with ("lda" or "product").</summary>
+    public required string RankerId { get; init; }
     /// <summary>Detections from the full multi-feature Percolator model (A).</summary>
     public int PercolatorTargetsAtQ01 { get; init; }
     public int PercolatorTargetsAtQ05 { get; init; }
@@ -153,9 +176,13 @@ public static class RepickPipeline
         IReadOnlyDictionary<PrecursorKey, double> rtByPrecursor,
         double rtTolerance,
         double rtSigma,
-        double minConsensusHeight = 0.0)
+        double minConsensusHeight = 0.0,
+        ICandidateRankModel? rankModel = null,
+        IReadOnlyDictionary<PrecursorKey, IReadOnlyList<CoreLibFragment>>? fragmentsByPrecursor = null,
+        OspreyConfig? ospreyConfig = null)
     {
-        var scorer = new OspreyFeatureScorer(new OspreyConfig());
+        var scorer = new OspreyFeatureScorer(ospreyConfig ?? new OspreyConfig());
+        var ranker = rankModel ?? scorer.DefaultRankModel;
         var rows = new List<RepickRow>();
         var noCwt = 0;
         var gateRejected = 0;
@@ -174,7 +201,10 @@ public static class RepickPipeline
                 noRt++;
             }
 
-            var r = scorer.Repick(group.Xics, expectedRt, rtTolerance, rtSigma, minConsensusHeight, computeFdrFeatures: true);
+            IReadOnlyList<CoreLibFragment>? frags = null;
+            fragmentsByPrecursor?.TryGetValue(rtKey, out frags);
+            var r = scorer.Repick(group.Xics, expectedRt, rtTolerance, rtSigma, minConsensusHeight,
+                computeFdrFeatures: true, libraryFragments: frags, rankModel: ranker);
             if (!r.HasPeak)
             {
                 if (r.TooFew)
@@ -252,6 +282,7 @@ public static class RepickPipeline
             NoRtMatch = noRt,
             RankOverrodeCwt = overrode,
             NoSecondBest = noSecond,
+            RankerId = ranker.Id,
             TargetsAtQ01 = rows.Count(r => r.Qvalue <= 0.01),
             TargetsAtQ05 = rows.Count(r => r.Qvalue <= 0.05),
             PercolatorTargetsAtQ01 = rows.Count(r => r.QvaluePercolator <= 0.01),

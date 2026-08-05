@@ -45,10 +45,26 @@ jobs:
             echo "::error::Directory.Build.props Version ($PROPS) does not match the tag ($TAG)"
             exit 1
           fi
-          if [ ! -f "release-notes/RELEASE_NOTES_${GITHUB_REF_NAME}.md" ]; then
-            echo "::error::release-notes/RELEASE_NOTES_${GITHUB_REF_NAME}.md is missing"
+
+      # The tag is v<version> and the notes are RELEASE_NOTES_v<version>.md, so the path follows from the tag.
+      # Resolved in its own step (as in skyline-prism) so a missing or empty file fails here with an actionable
+      # message, rather than publishing a Release with an empty body - which is the failure mode that is easy
+      # to miss, because the artifacts still attach and the workflow still goes green.
+      - name: Locate the release notes
+        id: notes
+        shell: bash
+        run: |
+          NOTES="release-notes/RELEASE_NOTES_${GITHUB_REF_NAME}.md"
+          if [ ! -f "$NOTES" ]; then
+            echo "::error::Expected release notes at $NOTES. Rename the draft (release-notes/RELEASE_NOTES_next.md) to match the tag before tagging - see the Release process in release-notes/README.md."
             exit 1
           fi
+          if [ ! -s "$NOTES" ]; then
+            echo "::error::$NOTES is empty; the Release body would be blank."
+            exit 1
+          fi
+          echo "Using release notes: $NOTES ($(wc -l < "$NOTES") lines)"
+          echo "notes=$NOTES" >> "$GITHUB_OUTPUT"
 
       - name: Checkout Osprey from pwiz (sparse)
         shell: bash
@@ -87,10 +103,12 @@ jobs:
           powershell -Command "Compress-Archive -Path dist/ospreytool-win-x64 -DestinationPath ospreytool-win-x64.zip"
 
       - name: Publish the GitHub Release
-        uses: softprops/action-gh-release@v2
+        # v3 only moves the action runtime from Node 20 to Node 24 (same inputs); v2 is Node 20, which the
+        # runners now force onto Node 24 anyway and warn about. Matches skyline-prism.
+        uses: softprops/action-gh-release@v3
         with:
           files: |
             dotnet/publish/OspreyTool.zip
             ospreytool-win-x64.zip
-          body_path: release-notes/RELEASE_NOTES_${{ github.ref_name }}.md
+          body_path: ${{ steps.notes.outputs.notes }}
           prerelease: ${{ contains(github.ref_name, 'alpha') || contains(github.ref_name, 'beta') || contains(github.ref_name, 'rc') }}

@@ -1,5 +1,6 @@
 using OspreyTool.Core.Detection;
 using OspreyTool.Scoring.Detection;
+using OspreyTool.Scoring.Ranking;
 using pwiz.Osprey.Chromatography;
 using pwiz.Osprey.Core;
 using pwiz.Osprey.Scoring;
@@ -27,6 +28,7 @@ public sealed class OspreyFeatureScorer
 
     private readonly OspreyScoringContext _context;
     private readonly IPeakDetector _detector;
+    private readonly ICandidateRankModel _defaultRankModel;
 
     /// <summary>Candidate peaks come from <paramref name="detector"/> (default: Osprey's CWT). Scoring,
     /// ranking, FDR and reconciliation are unchanged by the choice - see <see cref="IPeakDetector"/>.</summary>
@@ -34,21 +36,38 @@ public sealed class OspreyFeatureScorer
     {
         _context = new OspreyScoringContext(config);
         _detector = detector ?? PeakDetectors.Default;
+        // Osprey's default pick since #4484 is the learned linear model keyed to the resolution
+        // (OSPREY_PICK_LDA, default on), not the product form. Match it.
+        _defaultRankModel = PickLdaRankModel.ForConfig(config);
     }
 
     /// <summary>The detector supplying candidate peaks.</summary>
     public IPeakDetector Detector => _detector;
+
+    /// <summary>The rank model used when a caller passes none - Osprey's learned pick for this config's
+    /// resolution. Pass <see cref="ProductRankModel.Instance"/> explicitly for the legacy product pick.</summary>
+    public ICandidateRankModel DefaultRankModel => _defaultRankModel;
 
     /// <summary>A scorer with a default Osprey config - lets callers that don't reference the Osprey
     /// assembly (e.g. the CLI) create one without naming <see cref="OspreyConfig"/>.</summary>
     public static OspreyFeatureScorer CreateDefault(IPeakDetector? detector = null) =>
         new(new OspreyConfig(), detector);
 
-    /// <summary>Config for unit-resolution PRM (Stellar): unit-resolution matching + a Da tolerance.</summary>
+    /// <summary>Config for unit-resolution PRM/SRM (LIT such as Stellar, or a triple quad matching on m/z):
+    /// unit-resolution matching + a Da tolerance.</summary>
     public static OspreyConfig UnitResolutionConfig(double fragmentToleranceDa = 0.5) => new()
     {
         ResolutionMode = ResolutionMode.UnitResolution,
         FragmentTolerance = FragmentToleranceConfig.UnitResolution(fragmentToleranceDa),
+    };
+
+    /// <summary>Config for a high-resolution product analyzer (Orbitrap / TOF / FT-ICR / centroided):
+    /// HRAM matching + a ppm tolerance.</summary>
+    public static OspreyConfig HramConfig(double fragmentTolerancePpm = 20.0) => new()
+    {
+        ResolutionMode = ResolutionMode.HRAM,
+        FragmentTolerance = FragmentToleranceConfig.Hram(fragmentTolerancePpm),
+        PrecursorTolerance = FragmentToleranceConfig.Hram(fragmentTolerancePpm),
     };
 
     /// <summary>
@@ -141,7 +160,8 @@ public sealed class OspreyFeatureScorer
         double? expectedRt,
         double rtSigma,
         IReadOnlyList<CoreLibFragment>? libraryFragments = null,
-        double intensityExponent = 1.0)
+        double intensityExponent = 1.0,
+        ICandidateRankModel? rankModel = null)
     {
         var xics = new List<XicData>(xicSet.Count);
         var xicProductMz = new List<double>(xicSet.Count);
@@ -178,11 +198,11 @@ public sealed class OspreyFeatureScorer
         }
 
         var libFrags = BuildAlignedLibFragments(xicProductMz, libraryFragments);
-        var (coelution, libCosine, rtPenalty, intensityWeight, dt) = WindowTerms(
+        var (coelution, libCosine, rtPenalty, intensityWeight, apexIntensity, dt) = WindowTerms(
             xics, libFrags, refIntensities, startIndex, endIndex, apexIndex, rts,
             expectedRt, 2.0 * rtSigma * rtSigma, intensityExponent);
 
-        return new CandidatePeak
+        var window = new CandidatePeak
         {
             StartRt = RtAt(rts, startIndex),
             ApexRt = RtAt(rts, apexIndex),
@@ -192,8 +212,12 @@ public sealed class OspreyFeatureScorer
             RtResidual = dt,
             RtPenalty = rtPenalty,
             IntensityWeight = intensityWeight,
-            Rank = coelution * libCosine * rtPenalty * intensityWeight,
+            ApexIntensity = apexIntensity,
+            // A forced window is not a detector candidate, so there is no detector S/N to report.
+            SignalToNoise = 0.0,
         };
+        window.Rank = (rankModel ?? _defaultRankModel).Score(window);
+        return window;
     }
 
     public RepickResult Repick(
@@ -206,8 +230,10 @@ public sealed class OspreyFeatureScorer
         bool retainCandidates = false,
         IReadOnlyList<CoreLibFragment>? libraryFragments = null,
         bool traceCandidates = false,
-        double intensityExponent = 1.0)
+        double intensityExponent = 1.0,
+        ICandidateRankModel? rankModel = null)
     {
+        var ranker = rankModel ?? _defaultRankModel;
         // Co-elution is fragment-to-fragment; exclude the precursor isotope trace. Need >=2 fragments.
         // Re-index the fragments 0..n-1 (not the export order) so the median-polish row keys line up with
         // the by-m/z-aligned library-intensity vector used for the library cosine.
@@ -258,8 +284,7 @@ public sealed class OspreyFeatureScorer
         var refIntensities = xics[ReferenceIndex(xics)].Intensities;
 
         var twoSigmaSq = 2.0 * rtSigma * rtSigma;
-        var cands = new List<(XICPeakBounds peak, int cwtRank, double rank, double coelution, double residual,
-            double libCosine, double rtPenalty, double intensityWeight)>(peaks.Count);
+        var cands = new List<(XICPeakBounds peak, int cwtRank, CandidatePeak terms)>(peaks.Count);
         for (var i = 0; i < peaks.Count; i++)
         {
             var p = peaks[i];
@@ -279,12 +304,28 @@ public sealed class OspreyFeatureScorer
                 continue;
             }
 
-            var (coelution, libCosine, rtPenalty, intensityWeight, _) = WindowTerms(
+            var (coelution, libCosine, rtPenalty, intensityWeight, apexIntensity, _) = WindowTerms(
                 xics, libFrags, refIntensities, p.StartIndex, p.EndIndex, p.ApexIndex, rts,
                 expectedRt, twoSigmaSq, intensityExponent);
 
-            cands.Add((p, i, coelution * libCosine * rtPenalty * intensityWeight, coelution, dt,
-                libCosine, rtPenalty, intensityWeight));
+            // The candidate carries its own evidence, and the rank model turns that into the one number the
+            // pick is an argmax over - the product of the terms by default, the learned discriminant under
+            // --ranker lda. Nothing else in the pipeline depends on which model produced it.
+            var terms = new CandidatePeak
+            {
+                StartRt = RtAt(rts, p.StartIndex),
+                ApexRt = apexRt,
+                EndRt = RtAt(rts, p.EndIndex),
+                Coelution = coelution,
+                LibCosine = libCosine,
+                RtResidual = dt,
+                RtPenalty = rtPenalty,
+                IntensityWeight = intensityWeight,
+                ApexIntensity = apexIntensity,
+                SignalToNoise = p.SignalToNoise,
+            };
+            terms.Rank = ranker.Score(terms);
+            cands.Add((p, i, terms));
         }
 
         if (cands.Count == 0)
@@ -297,7 +338,7 @@ public sealed class OspreyFeatureScorer
         var bestI = 0;
         for (var k = 1; k < cands.Count; k++)
         {
-            if (cands[k].rank > cands[bestI].rank)
+            if (cands[k].terms.Rank > cands[bestI].terms.Rank)
             {
                 bestI = k;
             }
@@ -313,7 +354,7 @@ public sealed class OspreyFeatureScorer
             {
                 continue;
             }
-            if (secondI < 0 || cands[k].rank > cands[secondI].rank)
+            if (secondI < 0 || cands[k].terms.Rank > cands[secondI].terms.Rank)
             {
                 secondI = k;
             }
@@ -352,20 +393,9 @@ public sealed class OspreyFeatureScorer
                 {
                     continue;
                 }
-                trace.Add(new CandidatePeak
-                {
-                    StartRt = RtAt(rts, c.peak.StartIndex),
-                    ApexRt = RtAt(rts, c.peak.ApexIndex),
-                    EndRt = RtAt(rts, c.peak.EndIndex),
-                    Coelution = c.coelution,
-                    LibCosine = c.libCosine,
-                    RtResidual = c.residual,
-                    RtPenalty = c.rtPenalty,
-                    IntensityWeight = c.intensityWeight,
-                    Rank = c.rank,
-                    Chosen = k == bestI,
-                    SecondBest = k == secondI,
-                });
+                c.terms.Chosen = k == bestI;
+                c.terms.SecondBest = k == secondI;
+                trace.Add(c.terms);
             }
         }
 
@@ -376,13 +406,14 @@ public sealed class OspreyFeatureScorer
             StartRt = RtAt(rts, chosen.StartIndex),
             EndRt = RtAt(rts, chosen.EndIndex),
             ApexRt = RtAt(rts, chosen.ApexIndex),
-            Coelution = cands[bestI].coelution,
-            RankScore = cands[bestI].rank,
+            Coelution = cands[bestI].terms.Coelution,
+            RankScore = cands[bestI].terms.Rank,
+            ChosenTerms = cands[bestI].terms,
             CandidatePeaks = trace,
             HasSecondBest = secondI >= 0,
-            SecondBestCoelution = secondI >= 0 ? cands[secondI].coelution : double.NaN,
+            SecondBestCoelution = secondI >= 0 ? cands[secondI].terms.Coelution : double.NaN,
             ExpectedRt = expectedRt ?? double.NaN,
-            RtResidual = cands[bestI].residual,
+            RtResidual = cands[bestI].terms.RtResidual,
             CandidateCount = peaks.Count,
             ScoredCount = cands.Count,
             ChosenCwtRank = cands[bestI].cwtRank,
@@ -566,7 +597,8 @@ public sealed class OspreyFeatureScorer
 
     /// <summary>The four pick-score terms over one window. Shared by <see cref="Repick"/> (CWT candidates)
     /// and <see cref="ScoreWindow"/> (a boundary reconciliation forced), so the two can never drift apart.</summary>
-    private static (double Coelution, double LibCosine, double RtPenalty, double IntensityWeight, double Dt) WindowTerms(
+    private static (double Coelution, double LibCosine, double RtPenalty, double IntensityWeight,
+        double ApexIntensity, double Dt) WindowTerms(
         List<XicData> xics,
         List<LibraryFragment>? libFrags,
         double[] refIntensities,
@@ -623,7 +655,7 @@ public sealed class OspreyFeatureScorer
             }
         }
 
-        return (coelution, libCosine, rtPenalty, intensityWeight, dt);
+        return (coelution, libCosine, rtPenalty, intensityWeight, apexIntensity, dt);
     }
 
     private static TukeyMedianPolishResult? ComputePolish(List<XicData> xics, int startIndex, int endIndex)
