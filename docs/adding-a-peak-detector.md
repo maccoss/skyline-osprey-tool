@@ -20,7 +20,10 @@ The pipeline, per precursor per replicate:
    └──────────────────────┘
               │  many candidates
               ▼
-      rank each candidate:  coelution × libCosine × exp(-Δt²/2σ²) × ln(1+I)^w
+   ┌──────────────────────┐
+   │  ICandidateRankModel │  ← the SECOND seam (--ranker). Picks the winner.
+   └──────────────────────┘     product: coelution × libCosine × exp(-Δt²/2σ²) × ln(1+I)^w
+              │                 lda:     learned weights on the same evidence
               │
               ▼
       confidence (Percolator q-values from genuine decoys)

@@ -25,8 +25,10 @@ It ships two ways to run the same engine:
 Per precursor and replicate, over the chromatograms Skyline already extracted:
 
 1. **Detect** candidate peaks (Osprey CWT — or [any detector you plug in](#adding-a-peak-detection-algorithm)).
-2. **Rank** them: `coelution × libCosine × exp(-Δt²/2σ²) × ln(1+I)^w` — fragment co-elution, agreement with
-   the library spectrum (`median_polish_cosine`), and closeness to the expected retention time.
+2. **Rank** them with Osprey's [learned pick](docs/lda-peak-picking.md) — a frozen linear weighting of four
+   standardized terms: fragment co-elution, apex intensity, closeness to the expected retention time, and
+   agreement with the library spectrum (`median_polish`). Nothing is trained; the weights ship with the tool,
+   one set per platform. `--ranker product` selects the legacy multiplicative rank instead.
 3. **Score confidence**: genuine reversed decoys → Percolator q-values. (A reversed decoy has the same
    precursor m/z as its target, so it is probed inside the target's own scheduled isolation window and real
    decoy chromatograms can be extracted.)
@@ -117,8 +119,11 @@ SkylineCmd --in=study.sky --import-peak-boundaries=boundaries.csv --save
 |---|---|
 | `--rt-csv <rt.csv>` | Expected RTs from the **document** (`ExplicitRetentionTime`). Prefer this over the library's predicted RT — on real data the predicted RT was off by more than 0.5 min for 7% of peptides. |
 | `--detector <id>` | `osprey-cwt` (default) or `local-maxima`. |
-| `--lib-cosine` | Multiply the library spectral match into the pick score. |
-| `--intensity-exp <w>` | Exponent on the `ln(1+I)` term. `1` = Osprey-exact; `0` removes it. The other three terms are bounded on [0,1] and this one is not, so at `w=1` a far more intense interference can outvote co-elution, RT and spectral match combined. |
+| `--ranker <id>` | Which candidate wins. [`lda`](docs/lda-peak-picking.md) (default, and Osprey's default) is Osprey's frozen linear pick over four standardized terms — co-elution, `ln_intensity`, RT penalty, `median_polish`. Nothing is trained and no decoys are needed. `product` is the legacy multiplicative rank. |
+| `--sky <document.sky>` | Read the product mass analyzer from the document. This selects the frozen weight set: an m/z tolerance (LIT or triple quad) takes the unit-resolution set, ppm takes the HRAM set. Also sets Osprey's fragment tolerances. |
+| `--resolution unit\|hram` | Override that choice explicitly. |
+| `--lib-cosine` | Multiply the library spectral match into the pick score (`--ranker product` only — the learned pick always weights it). |
+| `--intensity-exp <w>` | Exponent on the `ln(1+I)` term (`--ranker product` only). `1` = Osprey's legacy pick; `0` removes it. The other three terms are bounded on [0,1] and this one is not, so at `w=1` a far more intense interference can outvote co-elution, RT and spectral match combined — the hand-tuned workaround the learned pick replaces. |
 | `--rt-sigma <min>` | Width of the Gaussian RT prior (default `0.3`). |
 | `--rt-tol <min>` | Hard RT gate. `0` = off, which is right for scheduled PRM: the extracted window *is* the scheduling window. |
 | `--no-fdr` | Confidence from co-elution rather than Percolator (no decoys needed). |
@@ -150,6 +155,9 @@ example, how to test it, and how to benchmark it against Osprey CWT on real data
 **return every plausible candidate, not just your best one** — the tool ranks them, and reconciliation needs
 the alternatives to snap to.
 
+*Which* candidate wins is the second, separate seam: `ICandidateRankModel` in `OspreyTool.Scoring`, selected
+with `--ranker`. → [`docs/lda-peak-picking.md`](docs/lda-peak-picking.md).
+
 ## Build from source
 
 Osprey lives in the [ProteoWizard/pwiz](https://github.com/ProteoWizard/pwiz) tree and is referenced by
@@ -177,6 +185,7 @@ Only the Osprey subtree is needed; CI fetches it with a sparse checkout of pwiz 
 |---|---|
 | [`docs/PROJECT_BRIEF.md`](docs/PROJECT_BRIEF.md) | The spec: decisions, verified upstream APIs, milestones, risks. |
 | [`docs/adding-a-peak-detector.md`](docs/adding-a-peak-detector.md) | How to plug in your own peak-detection algorithm — the contract, a worked example, and how to benchmark it. |
+| [`docs/lda-peak-picking.md`](docs/lda-peak-picking.md) | The learned peak pick: Osprey's frozen four-term linear ranking, the per-platform weight sets, and how the right one is chosen. |
 | [`docs/osprey-api.md`](docs/osprey-api.md) | The Osprey API contract this tool depends on. |
 | [`docs/data-formats.md`](docs/data-formats.md) | The chromatogram export / `.blib` / join formats, verified against real data. |
 | [`release-notes/`](release-notes/) | Release notes, plus the versioning and release process. |
@@ -189,6 +198,8 @@ Only the Osprey subtree is needed; CI fetches it with a sparse checkout of pwiz 
   consensus RT where no peak exists — even when the picker found the right peak.
 - **FDR is not yet wired into the connected (GUI) workflow**; it needs a decoy pairing manifest. Use the
   `decoyfdr` / `reconcile` CLI commands with `--decoys`.
+- **The GUI does not yet expose `--ranker` or the resolution choice.** It uses the defaults (learned pick,
+  unit resolution); the Settings "Primary scoring" dropdown still offers only the two product-form variants.
 
 ## License
 

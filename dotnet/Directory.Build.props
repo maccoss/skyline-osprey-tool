@@ -9,7 +9,7 @@
          separately in src/OspreyTool.App/tool-inf/info.properties and must be kept in lockstep at
          release time; .github/workflows/release.yml verifies both against the tag before publishing.
          Scheme: CalVer YY.feature.patch (see release-notes/README.md). -->
-    <Version>26.1.0</Version>
+    <Version>26.2.0</Version>
 
     <LangVersion>latest</LangVersion>
     <ImplicitUsings>enable</ImplicitUsings>

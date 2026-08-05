@@ -79,6 +79,36 @@ Two design decisions drive everything (see brief §"Decisions locked in"):
 2. **Chromatograms come from Skyline's extraction**, not a custom `.blib` schema. Osprey co-elutes the
    *observed* Skyline XICs against the *predicted* Carafe spectrum. No `.skyd` parsing, no re-import.
 
+## Two pluggable seams: peak detection, and candidate ranking
+
+Peak picking is **two** decisions, each swappable, and nothing downstream (scoring, FDR, reconciliation)
+depends on either choice:
+
+| decision | seam | ships today |
+| --- | --- | --- |
+| which windows are candidates | `OspreyTool.Core/Detection/IPeakDetector.cs` | `osprey-cwt` (default), `local-maxima` |
+| which candidate is the peak | `OspreyTool.Scoring/Ranking/ICandidateRankModel.cs` | `lda` (default), `product` |
+
+**Candidate ranking — `--ranker lda|product`, see [`docs/lda-peak-picking.md`](docs/lda-peak-picking.md).**
+`lda` is the **default**, matching Osprey (`OSPREY_PICK_LDA`, on since #4484). It is Osprey's **frozen** linear
+pick — `w0*z(coelution) + w1*z(ln_intensity) + w2*z(rt_penalty) + w3*z(median_polish)` — with the weights
+copied verbatim from `Osprey.Scoring/PickLdaModel.cs`. **Nothing is trained, no decoys are used, no FDR is
+attached**: the weights were fit offline in the Osprey repo (`OSPREY_PICK_DUMP_CANDIDATES` →
+`pick_lda_train.py`) and pasted in as constants. Relative to the old pick, co-elution and the RT penalty are
+unchanged, intensity moves from multiplier to weighted term, and the library spectral match (`median_polish`)
+joins the *pick* rather than only the post-pick feature vector. `product` is the legacy multiplicative rank
+(`OSPREY_PICK_LDA=0`), byte-identical to before the seam existed.
+
+Two consequences: the `.blib` fragment intensities are now needed **for the pick** (so `--lib-cosine` no
+longer gates loading them), and `--intensity-exp` / `--lib-cosine` shape only the `product` path.
+
+**Osprey ships one weight set per platform and they are not interchangeable.** The split is the
+fragment-tolerance *unit*: a fixed m/z window (LIT `qit`/`ion_trap`, or a triple quad matching on
+`mz_match_tolerance`) → the unit-resolution **Stellar** weights; ppm / resolving power (`orbitrap`, `tof`,
+`ft_icr`, `centroided`) → the **Astral** weights. `ScoringSetupFactory.Resolve` derives this from the
+document's transition settings (`--sky`), `--resolution unit|hram` overrides, and the choice is always printed
+with its provenance — never assumed silently. See also the `config-from-document` memory.
+
 ## Adding a peak-detection algorithm (the pluggable seam)
 
 **Full guide: [`docs/adding-a-peak-detector.md`](docs/adding-a-peak-detector.md)** (contract, worked example,
