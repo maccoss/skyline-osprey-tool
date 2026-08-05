@@ -114,22 +114,22 @@ On the real Stellar run the two rankers disagree on 570 of 5614 picks, and the d
 for co-elution. Both halves of that trade are measured below; **they point opposite ways, and neither is ground
 truth**, which is why this needs adjudication on real chromatograms rather than a summary statistic.
 
-Against the document's `ExplicitRetentionTime` (the **scheduling** RT — the instrument was targeted at it):
+Against the **library predicted** RT (what `repick --blib` uses; see the caveat below):
 
-| | disagreements | learned pick closer to the scheduling RT |
+| | disagreements | learned pick closer to the library RT |
 | --- | --- | --- |
 | all | 570 | 102 (17.9%) |
 | blanks | 156 | 22 (14.1%) |
 | real samples | 414 | 80 (19.3%) |
 
-Median |apex − scheduling RT|: **0.086 min product → 0.349 min learned**, a 4x increase.
+Median |apex − library RT|: **0.086 min product → 0.349 min learned**, a 4x increase.
 
 **But that is the per-run pick, and it is not what reaches the document.** Reconciliation exists precisely to
 survive a bad pick in one replicate: the cross-run consensus RT is anchored by the confident replicates, and an
 outlier is snapped to a candidate there or force-integrated. Re-measured through the full pipeline (charge
 consensus → consensus RT → keep / snap / force-integrate) on the same data, the RT gap essentially closes:
 
-| median |apex − scheduling RT| | product | learned |
+| median |apex − library RT| | product | learned |
 | --- | --- | --- |
 | per-run pick, no reconciliation | 0.086 min | 0.349 min |
 | **after reconciliation — the boundaries written to Skyline** | **0.040 min** | **0.046 min** |
@@ -153,12 +153,52 @@ Against fragment co-elution at the window each one chose:
 For scale, the 5044 picks where the two **agree** have a median co-elution of +0.686. So the disagreements are
 concentrated in the weak, genuinely ambiguous precursors — not spread evenly.
 
-**A worked case, and a caution about reading the RT statistic naively.** `ILGQQVPYATK +2` in `MMCC-3-001`: the
-candidate 0.01 min from the scheduling RT spans 7 scans of flat baseline a few hundred counts high, while each
-fragment's whole-chromatogram area is orders of magnitude larger — there is no peak there at all. Its co-elution
-is −0.104, correctly, and the learned pick goes elsewhere (11.28, co-elution 0.895). The multiplicative Gaussian
-RT prior is what held the old pick near an empty window. Restricting co-elution to the top-3 fragments does not
-rescue that window either (−0.145), so this is not an artifact of averaging over noisy transitions.
+**Two caveats on the RT reference itself.** These numbers were measured against the **library predicted** RT,
+because that is what `repick --blib` uses. Per this project's own findings the blib prediction is off by more
+than 0.5 min for ~7% of peptides, which is why `--rt-csv` (the document's `ExplicitRetentionTime`, the RT the
+acquisition was actually scheduled on) is the recommended input. So the RT column is agreement with a
+known-imperfect predictor, not with ground truth. For the worked case below the two happen to coincide
+(library 10.50, document `explicit_retention_time` 10.5022).
+
+### A worked case: why a no-peak window scores well on two of the four terms
+
+`ILGQQVPYATK +2` in `MMCC-3-001`. The candidate 0.01 min from the expected RT spans 7 scans of flat baseline a
+few hundred counts high, while each fragment's whole-chromatogram area is orders of magnitude larger — there is
+no peak there. Its co-elution is −0.104, correctly, and restricting co-elution to the top-3 fragments does not
+rescue it (−0.145), so that is not an artifact of averaging over noisy transitions. But it scores
+`median_polish` = **0.943**, the highest of all six candidates, and CWT emitted it as a candidate at all. Both
+have concrete causes worth knowing:
+
+**CWT emits it because there is no height floor.** `--min-consensus` defaults to 0, so every wavelet-scale
+maximum survives. What separates the windows is signal-to-noise, which the pick model does not use:
+
+| window | apex | max fragment intensity at apex | S/N |
+| --- | --- | --- | --- |
+| 10.44–10.56 (the empty one) | 10.52 | 5.2e2 | **6.0** |
+| 11.20–11.30 (the learned pick) | 11.28 | 2.1e4 | **642.9** |
+
+**The cosine is high because it cannot be low.** `LibCosine` compares `sqrt(exp(overall + rowEffect))` per
+fragment against `sqrt(libraryRelativeIntensity)` — and median polish fits *any* fragment × scan matrix, peak or
+not. On noise the row effects are just each transition's baseline level, so the "spectrum" being matched is the
+per-transition noise floor:
+
+| fragment | mean intensity in window | rowVec | libVec |
+| --- | --- | --- | --- |
+| y9 | 1.2e2 | 11.6 | 1.000 |
+| y7 | 7.5e1 | 5.1 | 0.497 |
+| y5 | 3.2e2 | 15.4 | 0.723 |
+| b2 | 2.4e2 | 16.1 | 0.657 |
+
+Both vectors are non-negative, and with only 4 fragments that confines them to a narrow cone: two *random*
+non-negative 4-vectors have a median cosine of **0.813** (25th percentile 0.694). Against that floor 0.943 is
+unremarkable, and the six candidates here span only 0.631–0.943 — so on a 4-transition precursor
+`median_polish` carries very little discriminating power, whatever weight the model puts on it. It gets worse,
+not better, as the transition count drops.
+
+**Net effect for this precursor:** per-run, the learned pick takes 11.28 — a genuine, intense, well-co-eluting
+elution that is 0.78 min from the expected RT and, given Skyline's own `avg_measured_retention_time` of 10.53
+across replicates, is most likely an interference. Reconciliation then pulls this replicate back to the
+cross-run consensus, which is exactly the division of labour the reconciled numbers above show.
 
 That case is the product rank's failure mode, and the 92% co-elution figure says it is the common direction. The
 opposite failure — a strong interference elsewhere winning on co-elution because `rt_penalty` now carries only 3%

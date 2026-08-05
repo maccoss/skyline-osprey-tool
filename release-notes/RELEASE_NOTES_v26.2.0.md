@@ -35,17 +35,25 @@ default — with the per-platform weight set chosen from the Skyline document's 
   co-elution's 0.993, where the previous pick applied the RT prior as a *multiplicative* Gaussian at σ = 0.3.
   Per run this makes picks wander: on the Stellar export the two rankers disagree on 570 of 5614 per-run picks,
   and the learned pick chose the **higher co-elution** window in 526 of them (92%; median +0.452 vs +0.317)
-  while sitting **further from the scheduling RT** (median |apex − `ExplicitRetentionTime`| 0.086 → 0.349 min).
+  while sitting **further from the library RT** (median |apex − library RT| 0.086 → 0.349 min).
 - **Reconciliation absorbs almost all of that**, which is what it is for — the cross-run consensus RT is
   anchored by the confident replicates, so one replicate's bad pick is outvoted. Measured through the full
-  pipeline on the same data, median |apex − scheduling RT| in the **boundaries actually written to Skyline** is
+  pipeline on the same data, median |apex − library RT| in the **boundaries actually written to Skyline** is
   0.040 min (product) vs 0.046 min (learned). The learned pick's real downstream effect is that reconciliation
   does more work: 1553 snap-to-candidate moves vs 1045, 303 forced integrations vs 214, 64 charge-consensus
   moves vs 34, with the same 301 consensus peptides. 1144 of 5652 delivered apexes (20.2%) differ, median shift
   0.200 min.
 - **So evaluate a ranker change on `reconcile` output, not `repick`** — the per-run numbers overstate it.
-  `--rt-sigma` cannot restore the RT prior: it shapes the term whose weight shrank. See
-  [`docs/lda-peak-picking.md`](../docs/lda-peak-picking.md).
+  `--rt-sigma` cannot restore the RT prior: it shapes the term whose weight shrank. Note also that the RT
+  figures above are against the **library predicted** RT (what `repick --blib` uses), which is off by more than
+  0.5 min for ~7% of peptides; `--rt-csv` (the document's `ExplicitRetentionTime`) is the better reference.
+- **`median_polish` discriminates weakly on low-transition precursors.** It compares two non-negative vectors,
+  so on a 4-transition precursor the cosine cannot be low: two random non-negative 4-vectors have a median
+  cosine of 0.813. An inspected window of pure baseline scored 0.943 — median polish fits any fragment × scan
+  matrix, so on noise the "spectrum" it matches is just the per-transition noise floor. Relevant mainly for the
+  HRAM weights, which put 0.776 on that term. Separately, `--min-consensus` defaults to 0, so CWT emits
+  noise-level windows as candidates; S/N separates them cleanly (6 vs 643 in that case) but is not one of the
+  model's four features. See [`docs/lda-peak-picking.md`](../docs/lda-peak-picking.md).
 
 ## Breaking Changes
 
